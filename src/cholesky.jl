@@ -139,8 +139,7 @@ function backwardsubst{T}(L::Matrix{PureHemi{T}}, y)
         if issingular(Lii)
             x[i] = h.m
         else
-            @assert h.n == h.m
-            x[i] = h.m/Lii.m
+            x[i] = h/Lii
         end
     end
     x
@@ -181,10 +180,9 @@ function backwardsubst{T}(L::Matrix{PureHemi{T}}, y, Yα, indxsing)
             end
             si -= 1
         else
-            @assert h.n == h.m
-            x[i] = h.m/Lii.m
+            x[i] = h/Lii
             for jj = 1:ns
-                Xα[i,jj] = hα[jj].m/Lii.m
+                Xα[i,jj] = hα[jj]/Lii
             end
         end
     end

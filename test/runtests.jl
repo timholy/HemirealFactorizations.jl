@@ -19,6 +19,14 @@ b = rand(size(A,2))
 x = F\b
 @test_approx_eq x A\b
 
+# An indefinite matrix
+A = [-1 0; 0 1]
+F = cholfact(PureHemi, A)
+@test_approx_eq F.L*F.L' A
+b = rand(size(A,2))
+x = F\b
+@test_approx_eq x A\b
+
 # A matrix that has no conventional LL' or LDL' factorization
 A = [0 1; 1 0]
 F = cholfact(PureHemi, A)
