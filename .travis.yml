@@ -8,6 +8,9 @@ julia:
   - nightly
 notifications:
   email: false
+# This before_script section is temporary; delete once packages are registered
+before_script:
+   - julia -e 'Pkg.clone("https://github.com/timholy/HemirealNumbers.jl.git")'
 # uncomment the following lines to override the default test script
 #script:
 #  - if [[ -a .git/shallow ]]; then git fetch --unshallow; fi
