@@ -1,5 +1,7 @@
 module HemirealFactorization
 
-# package code goes here
+using HemirealNumbers
+
+include("cholesky.jl")
 
 end # module
