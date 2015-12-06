@@ -11,7 +11,10 @@ notifications:
 # This before_script section is temporary; delete once packages are registered
 before_script:
    - julia -e 'Pkg.clone("https://github.com/timholy/HemirealNumbers.jl.git")'
-# uncomment the following lines to override the default test script
-#script:
-#  - if [[ -a .git/shallow ]]; then git fetch --unshallow; fi
-#  - julia -e 'Pkg.clone(pwd()); Pkg.build("HemirealFactorization"); Pkg.test("HemirealFactorization"; coverage=true)'
+script:
+  - if [[ -a .git/shallow ]]; then git fetch --unshallow; fi
+  - julia -e 'Pkg.clone(pwd()); Pkg.build("HemirealFactorization"); Pkg.test("HemirealFactorization"; coverage=true)'
+after_success:
+    - if [ $TRAVIS_JULIA_VERSION = "release" ] && [ $TRAVIS_OS_NAME = "linux" ]; then
+         julia -e 'cd(Pkg.dir("HemirealFactorization")); Pkg.add("Coverage"); using Coverage; Codecov.submit(process_folder())';
+      fi
