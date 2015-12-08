@@ -13,8 +13,8 @@ before_script:
    - julia -e 'Pkg.clone("https://github.com/timholy/HemirealNumbers.jl.git")'
 script:
   - if [[ -a .git/shallow ]]; then git fetch --unshallow; fi
-  - julia -e 'Pkg.clone(pwd()); Pkg.build("HemirealFactorization"); Pkg.test("HemirealFactorization"; coverage=true)'
+  - julia -e 'Pkg.clone(pwd()); Pkg.build("HemirealFactorizations"); Pkg.test("HemirealFactorizations"; coverage=true)'
 after_success:
     - if [ $TRAVIS_JULIA_VERSION = "release" ] && [ $TRAVIS_OS_NAME = "linux" ]; then
-         julia -e 'cd(Pkg.dir("HemirealFactorization")); Pkg.add("Coverage"); using Coverage; Codecov.submit(process_folder())';
+         julia -e 'cd(Pkg.dir("HemirealFactorizations")); Pkg.add("Coverage"); using Coverage; Codecov.submit(process_folder())';
       fi

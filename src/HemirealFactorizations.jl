@@ -1,6 +1,6 @@
 __precompile__()
 
-module HemirealFactorization
+module HemirealFactorizations
 
 using HemirealNumbers
 
