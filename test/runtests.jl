@@ -1,6 +1,8 @@
 using HemirealNumbers, HemirealFactorizations
 using Base.Test
 
+const mult_safe = VERSION >= v"0.5.0-dev"   # julia #14293
+
 A = [2 0; 0 2]
 F = cholfact(PureHemi, A)
 @test F.L == [μ+ν 0; 0 μ+ν]
@@ -14,10 +16,18 @@ x = F\b
 
 A = rand(7,5); A = A'*A
 F = cholfact(PureHemi, A)
-# @test_approx_eq F.L*F.L' A   # julia #14293
+if mult_safe
+    @test_approx_eq F.L*F.L' A
+end
 b = rand(size(A,2))
 x = F\b
 @test_approx_eq x A\b
+
+A = rand(3,5); A = A'*A
+F = cholfact(PureHemi, A)
+if mult_safe
+    @test_approx_eq F.L*F.L' A
+end
 
 # An indefinite matrix
 A = [-1 0; 0 1]
@@ -42,7 +52,6 @@ yα1 = y0 + Yα*α
 yα2 = HemirealFactorizations.forwardsubst(F.L, b, indxsing, α)
 @test_approx_eq yα1 yα2
 x, Xα, Cα, bα = HemirealFactorizations.backwardsubst(F.L, y0, Yα, indxsing)
-@show A Cα bα b
 @test x == [0,0]
 @test Xα == eye(2)
 @test_approx_eq Cα -A
@@ -68,7 +77,6 @@ y0, Yα = HemirealFactorizations.forwardsubst(F.L, b, indxsing)
 @test_approx_eq y0 [b[1]ν, b[2]/(2μ+2ν), (b[3]-3b[2]/2)/(μ+ν)]
 @test_approx_eq Yα [μ, -1/(2μ+2ν), 5/(2μ+2ν)]
 x, Xα, Cα, bα = HemirealFactorizations.backwardsubst(F.L, y0, Yα, indxsing)
-@show A A'*A Cα bα b
 # high-level interface
 x = F\b
 @test_approx_eq x A\b

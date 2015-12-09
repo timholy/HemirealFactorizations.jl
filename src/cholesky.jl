@@ -31,7 +31,11 @@ function Base.cholfact{T}(::Type{PureHemi{T}}, A::AbstractMatrix, δ=defaultδ(A
         else
             L[j,j] = PureHemi{T}(1, 0)
             for i = j+1:K
-                L[i,j] = PureHemi{T}(0, A[i,j])
+                s = A[i,j]
+                for k = 1:j-1
+                    s -= L[i,k]*L[j,k]
+                end
+                L[i,j] = PureHemi{T}(0, s)
             end
         end
     end
