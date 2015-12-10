@@ -48,21 +48,16 @@ function (\){T}(F::HemirealCholesky{T}, b::AbstractVector)
     K = length(b)
     size(L,1) == K || throw(DimensionMismatch("rhs must have a length ($(length(b))) consistent with the size $(size(L)) of the matrix"))
     # Determine the singular diagonals
-    indxsing = Int[]
-    for i = 1:K
-        if issingular(L[i,i])
-            push!(indxsing, i)
-        end
-    end
+    indxsing = singular_diagonals(L)
     if isempty(indxsing)
         y = forwardsubst(L, b, indxsing, eltype(b)[])
     else
-        # There were singular columns, we first have to determine α, the
+        # There were singular columns. We first have to determine α, the
         # μ-components of the forward-substitution solution for y in the
         # singular columns.
-        y0, Yα = forwardsubst(L, b, indxsing)
-        x, Xα, Cα, bα = backwardsubst(L, y0, Yα, indxsing)
-        α, Δb = resolve(Cα, bα, indxsing, b)
+        ytilde, Y = forwardsubst(L, b, indxsing)
+        xtilde, X, H, htildeα = backwardsubst(L, ytilde, Y, indxsing)
+        α, Δb = resolve(H, htildeα, indxsing, b)
         y = forwardsubst(L, b+Δb, indxsing, α)
     end
     backwardsubst(L, y)
@@ -91,42 +86,42 @@ end
 
 # Forward-substitution with placeholders for the undetermined
 # μ-components α of the singular columns.
-function forwardsubst{T}(L::Matrix{PureHemi{T}}, b, indxsing)
+function forwardsubst{T}(L::Matrix{PureHemi{T}}, b, indxsing=singular_diagonals(L))
     K = length(b)
     ns = length(indxsing)
-    y0 = fill(zero(PureHemi{T}), K)      # solution with α=0, y = y0 + Yα*α
-    Yα = fill(zero(PureHemi{T}), K, ns)  # coefficients of α on each row
-    cα = Array(T, ns)                    # α-coefficient on current row
+    ytilde = fill(zero(PureHemi{T}), K) # solution with α=0, y = ytilde + Y*α
+    Y = fill(zero(PureHemi{T}), K, ns)  # coefficients of α on each row
+    gα = Array(T, ns)                   # α-coefficient on current row
     si = 0 # number of singular columns processed so far
     for i = 1:K
-        r = b[i]   # r = residual
+        g = b[i]
         for jj = 1:si
-            cα[jj] = 0
+            gα[jj] = 0
         end
         for j = 1:i-1
             Lij = L[i,j]
-            r -= Lij*y0[j]
+            g -= Lij*ytilde[j]
             for jj = 1:si
-                cα[jj] -= Lij*Yα[j,jj]
+                gα[jj] -= Lij*Y[j,jj]
             end
         end
         Lii = L[i,i]
         if issingular(Lii)
-            y0[i] = PureHemi{T}(0, r/Lii.m)
+            ytilde[i] = PureHemi{T}(0, g/Lii.m)
             for jj = 1:si
-                Yα[i,jj] = PureHemi{T}(0, cα[jj]/Lii.m)
+                Y[i,jj] = PureHemi{T}(0, gα[jj]/Lii.m)
             end
             # Add a new singular column
             si += 1
-            Yα[i,si] = PureHemi{T}(1, 0)  # add α[si]*μ to y[i]
+            Y[i,si] = PureHemi{T}(1, 0)  # add α[si]*μ to y[i]
         else
-            y0[i] = r/Lii
+            ytilde[i] = g/Lii
             for jj = 1:si
-                Yα[i,jj] = cα[jj]/Lii
+                Y[i,jj] = gα[jj]/Lii
             end
         end
     end
-    y0, Yα
+    ytilde, Y
 end
 
 # Backward-substitution
@@ -151,56 +146,66 @@ end
 
 # Backward-substitution with placeholders for the undetermined
 # μ-components α of singular columns.
-function backwardsubst{T}(L::Matrix{PureHemi{T}}, y, Yα, indxsing)
+function backwardsubst{T}(L::Matrix{PureHemi{T}}, y, Y, indxsing=singular_diagonals(L))
     K = length(y)
     si = length(indxsing)
     ns = si
-    x = Array(T, K)
-    Xα = zeros(T, K, si)
-    Cα = Array(T, si, si)
-    bα = Array(T, si)
+    xtilde = Array(T, K)
+    X = zeros(T, K, si)
+    H = Array(T, si, si)
+    htildeα = Array(T, si)
     hα = Array(PureHemi{T}, si)
     ni = 0
     for i = K:-1:1
-        h = y[i]
+        htilde = y[i]
         for jj = 1:ns
-            hα[jj] = Yα[i,jj]
+            hα[jj] = Y[i,jj]
         end
         for j = i+1:K
             Lji = L[j,i]
-            h -= Lji*x[j]
+            htilde -= Lji*xtilde[j]
             for jj = 1:ns
-                hα[jj] -= Lji*Xα[j,jj]
+                hα[jj] -= Lji*X[j,jj]
             end
         end
         Lii = L[i,i]
         if issingular(Lii)
-            x[i] = h.m
-            bα[si] = -h.n
+            xtilde[i] = htilde.m
+            htildeα[si] = -htilde.n
             for jj = 1:ns
                 h = hα[jj]
-                Cα[si,jj] = h.n
-                Xα[i,jj] = h.m
+                H[si,jj] = h.n
+                X[i,jj] = h.m
             end
             si -= 1
         else
-            x[i] = h/Lii
+            xtilde[i] = htilde/Lii
             for jj = 1:ns
-                Xα[i,jj] = hα[jj]/Lii
+                X[i,jj] = hα[jj]/Lii
             end
         end
     end
-    x, Xα, Cα, bα
+    xtilde, X, H, htildeα
 end
 
-function resolve(Cα, bα, indxsing, b)
-    α = svdfact(Cα)\bα
+function resolve(H, htildeα, indxsing, b)
+    α = svdfact(H)\htildeα
     Δb = zeros(b)  # correction to b to put it in the range of A
-    Δb[indxsing] = Cα*α - bα
+    Δb[indxsing] = H*α - htildeα
     α, Δb
 end
 
 issingular(x::PureHemi) = x.n == 0
+
+function singular_diagonals(L)
+    indxsing = Int[]
+    for i = 1:size(L,1)
+        if issingular(L[i,i])
+            push!(indxsing, i)
+        end
+    end
+    indxsing
+end
 
 floattype{T<:AbstractFloat}(::Type{T}) = T
 floattype{T<:Integer}(::Type{T}) = Float64

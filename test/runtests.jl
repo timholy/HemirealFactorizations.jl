@@ -44,19 +44,19 @@ F = cholfact(PureHemi, A)
 b = rand(size(A,2))
 # low-level interface
 indxsing = [1,2]
-y0, Yα = HemirealFactorizations.forwardsubst(F.L, b, indxsing)
-@test y0 == b*ν
-@test Yα == [μ 0; -ν μ]
+ytilde, Y = HemirealFactorizations.forwardsubst(F.L, b, indxsing)
+@test ytilde == b*ν
+@test Y == [μ 0; -ν μ]
 α = rand(2)
-yα1 = y0 + Yα*α
+yα1 = ytilde + Y*α
 yα2 = HemirealFactorizations.forwardsubst(F.L, b, indxsing, α)
 @test_approx_eq yα1 yα2
-x, Xα, Cα, bα = HemirealFactorizations.backwardsubst(F.L, y0, Yα, indxsing)
+x, X, H, htildeα = HemirealFactorizations.backwardsubst(F.L, ytilde, Y, indxsing)
 @test x == [0,0]
-@test Xα == eye(2)
-@test_approx_eq Cα -A
-@test_approx_eq bα -b
-α, Δb = HemirealFactorizations.resolve(Cα, bα, indxsing, b)
+@test X == eye(2)
+@test_approx_eq H -A
+@test_approx_eq htildeα -b
+α, Δb = HemirealFactorizations.resolve(H, htildeα, indxsing, b)
 @test Δb == [0,0]  # because the matrix isn't singular
 @test α == reverse(b)
 # High-level interface
@@ -72,11 +72,10 @@ F = cholfact(PureHemi, A)
 @test_approx_eq F.L [μ 0 0; ν 2μ+2ν 0; -ν 3μ+3ν μ+ν]
 b = rand(size(A,2))
 # low-level interface
-indxsing = [1]
-y0, Yα = HemirealFactorizations.forwardsubst(F.L, b, indxsing)
-@test_approx_eq y0 [b[1]ν, b[2]/(2μ+2ν), (b[3]-3b[2]/2)/(μ+ν)]
-@test_approx_eq Yα [μ, -1/(2μ+2ν), 5/(2μ+2ν)]
-x, Xα, Cα, bα = HemirealFactorizations.backwardsubst(F.L, y0, Yα, indxsing)
+ytilde, Y = HemirealFactorizations.forwardsubst(F.L, b)
+@test_approx_eq ytilde [b[1]ν, b[2]/(2μ+2ν), (b[3]-3b[2]/2)/(μ+ν)]
+@test_approx_eq Y [μ, -1/(2μ+2ν), 5/(2μ+2ν)]
+xtilde, X, H, htildeα = HemirealFactorizations.backwardsubst(F.L, ytilde, Y)
 # high-level interface
 x = F\b
 @test_approx_eq x A\b
@@ -89,7 +88,7 @@ bsvd = A*xsvd
 F = cholfact(PureHemi, A)
 @test_approx_eq F.L*F.L' A
 x = F\bsvd
-@test_approx_eq A*x bsvd
+@test_approx_eq_eps A*x bsvd 1e-10
 
 # rhs not within the range of the matrix
 x = F\b
