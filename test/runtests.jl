@@ -97,3 +97,17 @@ bchol = A*x
 # Test that the correction is limited to the 3rd entry
 @test abs(Δb[1]) < 1e-12
 @test abs(Δb[2]) < 1e-12
+
+# In-place versions
+A = randn(4,3); A = A'*A
+F = cholfact!(PureHemi, copy(A))
+Fh = convert(HemirealFactorizations.PureHemiCholesky, F)
+@test_approx_eq Fh.L*Fh.L' A
+A[1,1] = 0
+F = cholfact!(PureHemi, copy(A))
+Fh = convert(HemirealFactorizations.PureHemiCholesky, F)
+@test_approx_eq Fh.L*Fh.L' A
+A = randn(2,3); A = A'*A
+F = cholfact!(PureHemi, copy(A))
+Fh = convert(HemirealFactorizations.PureHemiCholesky, F)
+@test_approx_eq Fh.L*Fh.L' A

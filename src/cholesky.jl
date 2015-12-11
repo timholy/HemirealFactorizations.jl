@@ -1,8 +1,38 @@
 import Base: \
 
-immutable HemirealCholesky{T}
+immutable PureHemiCholesky{T}
     L::Matrix{PureHemi{T}}
 end
+# Pure-hemi encoded as a real (stores the nu-component in lower-triangle of L)
+immutable HemiCholeskyReal{T<:AbstractFloat}
+    L::Matrix{T}
+    d::Vector{Int8}
+end
+
+Base.size(F::PureHemiCholesky) = size(F.L)
+Base.size(F::PureHemiCholesky, d::Integer) = size(F.L, d)
+Base.size(F::HemiCholeskyReal) = size(F.L)
+Base.size(F::HemiCholeskyReal, d::Integer) = size(F.L, d)
+
+function Base.convert{T}(::Type{PureHemiCholesky{T}}, F::HemiCholeskyReal)
+    L = Array(PureHemi{T}, size(F))
+    K = size(F, 1)
+    for j = 1:K
+        Ljj, d = F.L[j,j], F.d[j]
+        for i = 1:j-1
+            L[i,j] = zero(PureHemi{T})
+        end
+        L[j,j] = d == 0 ? PureHemi{T}(1,0) : PureHemi{T}(Ljj*d, Ljj)
+        for i = j+1:K
+            Lij = F.L[i,j]
+            L[i,j] = PureHemi{T}(d*Lij, Lij)
+        end
+    end
+    PureHemiCholesky(L)
+end
+Base.convert{T}(::Type{PureHemiCholesky}, F::HemiCholeskyReal{T}) = convert(PureHemiCholesky{T}, F)
+
+# Base.show(io::IO, F::HemiCholeskyReal) = show(io, convert(PureHemiCholesky, F))
 
 # This could be done in-place with just real representations, but this
 # simple implementation involves less bookkeeping.
@@ -19,7 +49,7 @@ function Base.cholfact{T}(::Type{PureHemi{T}}, A::AbstractMatrix, δ=defaultδ(A
         end
         if abs(s) > δ
             f = sqrt(abs(s)/2)
-            Ljj = PureHemi{T}(f, sign(s)*f)
+            Ljj = PureHemi{T}(sign(s)*f, f)
             L[j,j] = Ljj
             for i = j+1:K
                 s = A[i,j]
@@ -39,11 +69,45 @@ function Base.cholfact{T}(::Type{PureHemi{T}}, A::AbstractMatrix, δ=defaultδ(A
             end
         end
     end
-    HemirealCholesky(L)
+    PureHemiCholesky(L)
 end
 Base.cholfact(::Type{PureHemi}, A::AbstractMatrix, δ=defaultδ(A)) = cholfact(PureHemi{floattype(eltype(A))}, A, δ)
 
-function (\){T}(F::HemirealCholesky{T}, b::AbstractVector)
+# In-place and much higher performance (fairly cache-friendly)
+# Could do even better by computing this in blocks
+function Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi{T}}, A::AbstractMatrix{T}, δ=defaultδ(A))
+    size(A,1) == size(A,2) || error("A must be square")
+    eltype(A)<:Real || error("element type $(eltype(A)) not yet supported")
+    K = size(A, 1)
+    d = Array(Int8, K)
+    for j = 1:K
+        Ajj = A[j,j]
+        if abs(Ajj) > δ
+            # compute ℓ (as A[j:k,j])
+            d[j] = sign(Ajj)
+            s = sqrt(2*abs(Ajj))
+            A[j,j] = s/2
+            f = d[j]/s
+            for i = j+1:K
+                A[i,j] *= f
+            end
+            # Subtract ℓ⊗ℓ from the rest of the matrix
+            for k = j+1:K
+                f = 2*d[j]*A[k,j]
+                @simd for i = k:K
+                    @inbounds A[i,k] -= A[i,j]*f
+                end
+            end
+        else
+            d[j] = 0
+            A[j,j] = 0
+        end
+    end
+    HemiCholeskyReal(A, d)
+end
+Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi}, A::AbstractMatrix{T}, δ=defaultδ(A)) = cholfact!(PureHemi{T}, A, δ)
+
+function (\){T}(F::PureHemiCholesky{T}, b::AbstractVector)
     L = F.L
     K = length(b)
     size(L,1) == K || throw(DimensionMismatch("rhs must have a length ($(length(b))) consistent with the size $(size(L)) of the matrix"))
