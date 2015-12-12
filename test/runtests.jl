@@ -98,8 +98,8 @@ bchol = A*x
 @test abs(Δb[1]) < 1e-12
 @test abs(Δb[2]) < 1e-12
 
-# In-place versions
-A = randn(4,3); A = A'*A
+# In-place versions. Make these big enough to test blocked algorithm.
+A = randn(201,200); A = A'*A
 F = cholfact!(PureHemi, copy(A))
 Fh = convert(HemirealFactorizations.PureHemiCholesky, F)
 @test_approx_eq Fh.L*Fh.L' A
@@ -107,7 +107,7 @@ A[1,1] = 0
 F = cholfact!(PureHemi, copy(A))
 Fh = convert(HemirealFactorizations.PureHemiCholesky, F)
 @test_approx_eq Fh.L*Fh.L' A
-A = randn(2,3); A = A'*A
+A = randn(199,200); A = A'*A
 F = cholfact!(PureHemi, copy(A))
 Fh = convert(HemirealFactorizations.PureHemiCholesky, F)
 @test_approx_eq Fh.L*Fh.L' A

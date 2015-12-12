@@ -1,4 +1,6 @@
 import Base: \
+using Base.BLAS: syrk!, syr2k!
+using Base.LinAlg: BlasFloat
 
 immutable PureHemiCholesky{T}
     L::Matrix{PureHemi{T}}
@@ -34,8 +36,7 @@ Base.convert{T}(::Type{PureHemiCholesky}, F::HemiCholeskyReal{T}) = convert(Pure
 
 # Base.show(io::IO, F::HemiCholeskyReal) = show(io, convert(PureHemiCholesky, F))
 
-# This could be done in-place with just real representations, but this
-# simple implementation involves less bookkeeping.
+# Toy implementation (very cache-unfriendly)
 function Base.cholfact{T}(::Type{PureHemi{T}}, A::AbstractMatrix, δ=defaultδ(A))
     issym(A) || error("A must be symmetric")
     eltype(A)<:Real || error("element type $(eltype(A)) not yet supported")
@@ -73,39 +74,153 @@ function Base.cholfact{T}(::Type{PureHemi{T}}, A::AbstractMatrix, δ=defaultδ(A
 end
 Base.cholfact(::Type{PureHemi}, A::AbstractMatrix, δ=defaultδ(A)) = cholfact(PureHemi{floattype(eltype(A))}, A, δ)
 
-# In-place and much higher performance (fairly cache-friendly)
-# Could do even better by computing this in blocks
-function Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi{T}}, A::AbstractMatrix{T}, δ=defaultδ(A))
+# In-place and fairly cache-friendly, but not blocked
+# function Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi{T}}, A::AbstractMatrix{T}, δ=defaultδ(A))
+#     size(A,1) == size(A,2) || error("A must be square")
+#     eltype(A)<:Real || error("element type $(eltype(A)) not yet supported")
+#     K = size(A, 1)
+#     d = Array(Int8, K)
+#     for j = 1:K
+#         Ajj = A[j,j]
+#         if abs(Ajj) > δ
+#             # compute ℓ (as A[j:k,j])
+#             d[j] = sign(Ajj)
+#             s = sqrt(2*abs(Ajj))
+#             A[j,j] = s/2
+#             f = d[j]/s
+#             for i = j+1:K
+#                 A[i,j] *= f
+#             end
+#             # Subtract ℓ⊗ℓ from the rest of the matrix
+#             for k = j+1:K
+#                 f = 2*d[j]*A[k,j]
+#                 @simd for i = k:K
+#                     @inbounds A[i,k] -= A[i,j]*f
+#                 end
+#             end
+#         else
+#             d[j] = 0
+#             A[j,j] = 0
+#         end
+#     end
+#     HemiCholeskyReal(A, d)
+# end
+
+# Blocked, cache-friendly version
+function Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi{T}}, A::AbstractMatrix{T}, δ=defaultδ(A); blocksize=default_blocksize(T))
     size(A,1) == size(A,2) || error("A must be square")
     eltype(A)<:Real || error("element type $(eltype(A)) not yet supported")
     K = size(A, 1)
     d = Array(Int8, K)
-    for j = 1:K
-        Ajj = A[j,j]
-        if abs(Ajj) > δ
-            # compute ℓ (as A[j:k,j])
-            d[j] = sign(Ajj)
-            s = sqrt(2*abs(Ajj))
-            A[j,j] = s/2
-            f = d[j]/s
-            for i = j+1:K
-                A[i,j] *= f
-            end
-            # Subtract ℓ⊗ℓ from the rest of the matrix
-            for k = j+1:K
-                f = 2*d[j]*A[k,j]
-                @simd for i = k:K
-                    @inbounds A[i,k] -= A[i,j]*f
+    for jo = 0:blocksize:K-1       # outer j
+        jend = min(K,jo+blocksize)
+        # Do the diagonal block
+        for j = jo+1:jend  # inner j
+            Ajj = A[j,j]
+            if abs(Ajj) > δ
+                # compute ℓ (as the jth column of A)
+                d[j] = sign(Ajj)
+                s = sqrt(2*abs(Ajj))
+                A[j,j] = s/2
+                f = d[j]/s
+                for i = j+1:jend
+                    A[i,j] *= f
                 end
+                subtract_ℓ!(A, d, j, jend)
+            else
+                d[j] = 0
+                A[j,j] = 0
             end
-        else
-            d[j] = 0
-            A[j,j] = 0
         end
+        # Do the remaining blocks in this column of blocks
+        for io = jo+blocksize:blocksize:K-1
+            iend = min(K, io+blocksize)
+            solve_and_subtract_ℓ!(A, d, io+1:iend, jo+1:jend)
+        end
+        k = jo+blocksize+1
+        update_columns!(sub(A, k:K, k:K), sub(d, jo+1:jend), sub(A, k:K, jo+1:jend))
     end
     HemiCholeskyReal(A, d)
 end
-Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi}, A::AbstractMatrix{T}, δ=defaultδ(A)) = cholfact!(PureHemi{T}, A, δ)
+Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi}, A::AbstractMatrix{T}, δ=defaultδ(A); blocksize=default_blocksize(T)) = cholfact!(PureHemi{T}, A, δ; blocksize=blocksize)
+
+function subtract_ℓ!(A, d, j::Integer, jend::Integer)
+    # Subtract ℓ⊗ℓ from the diagonal block
+    for k = j+1:jend
+        f = 2*d[j]*A[k,j]
+        @simd for i = k:jend
+            @inbounds A[i,k] -= A[i,j]*f
+        end
+    end
+    nothing
+end
+
+function solve_and_subtract_ℓ!(A, d, irange, jrange)
+    # Solve for ℓ and subtract ℓ⊗ℓ from the i,j block
+    for j in jrange
+        dj = d[j]
+        dj == 0 && continue
+        s = 2*A[j,j]
+        f = dj/s
+        for i in irange
+            A[i,j] *= f
+        end
+        # Subtract ℓ⊗ℓ from the rest of the block
+        for k = j+1:last(jrange)
+            f = 2*d[j]*A[k,j]
+            @simd for i in irange
+                @inbounds A[i,k] -= A[i,j]*f
+            end
+        end
+    end
+    nothing
+end
+
+function update_columns!{T<:BlasFloat}(dest::StridedMatrix{T}, d, C::StridedMatrix{T})
+    isempty(d) && return dest
+    # If d is homogeneous, we can use syr rather than syr2
+    allsame = true
+    d1 = d[1]
+    for i = 2:length(d)
+        allsame &= (d[i] == d1)
+    end
+    allsame && d1 == 0 && return dest
+    if allsame
+        syrk!('L', 'N', convert(T, -2*d1), C, one(T), dest)
+    else
+        Cd = scale(C, d)
+        syr2k!('L', 'N', -one(T), C, Cd, one(T), dest)
+    end
+    dest
+end
+
+function update_columns!(dest, d, C)
+    Ct = C'
+    Cdt = scale(2*d, Ct)
+    K = size(dest, 1)
+    blocksize = size(C, 2)
+#    for jo = 0:blocksize:K-1
+#        jend = min(K, jo+blocksize)
+#        for io = jo:blocksize:K-1
+#            iend = min(K, io+blocksize)
+    jo, jend = 0, K
+        io, iend = 0, K
+            for j = jo+1:jend
+                joff = (j-1)*size(Cdt,1)
+                for i = max(j,io+1):iend
+                    ioff = (i-1)*size(Ct,1)
+                    tmp = zero(eltype(dest))
+                    @simd for k = 1:blocksize
+                        @inbounds tmp += Ct[k+ioff]*Cdt[k+joff]
+                    end
+                    @inbounds dest[i,j] -= tmp
+                end
+#            end
+#        end
+    end
+    dest
+end
+
 
 function (\){T}(F::PureHemiCholesky{T}, b::AbstractVector)
     L = F.L
@@ -275,3 +390,6 @@ floattype{T<:AbstractFloat}(::Type{T}) = T
 floattype{T<:Integer}(::Type{T}) = Float64
 
 defaultδ(A) = sqrt(eps(floattype(eltype(A)))) * maxabs(A)
+const cachesize = 2^15
+
+default_blocksize{T}(::Type{T}) = max(4, floor(Int, sqrt(cachesize/sizeof(T)/4)))
