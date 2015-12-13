@@ -2,26 +2,36 @@ import Base: *, \, unsafe_getindex
 using Base.BLAS: syr!, ger!, syrk!, syr2k!
 using Base.LinAlg: BlasFloat
 
+export nullsolver
+
+### Types, conversions, and basic utilities
+
 abstract AbstractHemiCholesky{T<:Real}
 
 immutable HemiCholesky{T} <: AbstractHemiCholesky{T}
     L::Matrix{PureHemi{T}}
 end
+
 # Pure-hemi encoded as real (stores the nu-component in lower-triangle of L)
 immutable HemiCholeskyReal{T} <: AbstractHemiCholesky{T}
     L::Matrix{T}
-    d::Vector{Int8}
+    d::Vector{Int8}  # diagonal sign (-1, 0, or 1)
 end
 
 immutable HemiCholeskyXY{T<:Real,Ltype<:AbstractHemiCholesky,Htype} <: AbstractHemiCholesky{T}
     L::Ltype
     X::Matrix{T}
     Y::Matrix{PureHemi{T}}
-    H::Htype
+    HF::Htype
     Q::Matrix{T}
-    nullindex::Vector{Int}
+    nullflag::BitVector
 end
-HemiCholeskyXY(L::AbstractHemiCholesky, X, Y, H, Q, nullindex) = HemiCholeskyXY{eltype(X), typeof(L), typeof(H)}(L, X, Y, H, Q, nullindex)
+HemiCholeskyXY(L::HemiCholeskyReal) = nullsolver(L)
+
+function nullsolver(L::HemiCholeskyReal; tol=default_tol(L))
+    X, Y, HF, Q, nullflag = solve_singularities(L; tol=tol)
+    HemiCholeskyXY{eltype(X), typeof(L), typeof(HF)}(L, X, Y, HF, Q, nullflag)
+end
 
 for FT in (HemiCholesky, HemiCholeskyReal, HemiCholeskyXY)
     @eval begin
@@ -64,34 +74,42 @@ Base.convert{T}(::Type{Matrix{T}}, F::AbstractHemiCholesky) = convert(HemiCholes
 
 function Base.show(io::IO, F::AbstractHemiCholesky)
     println(io, Base.dims2string(size(F)), " ", typeof(F), ':')
-    _show(io, convert(Matrix, F))
+    Base.with_output_limit(()->Base.print_matrix(io, convert(Matrix, F)))
 end
 
-_show(io::IO, M::Matrix) = Base.with_output_limit(()->Base.print_matrix(io, M))
-
-
 function Base.A_mul_Bt(F1::AbstractHemiCholesky, F2::AbstractHemiCholesky)
-    L = convert(Matrix, F1)
+    L1 = convert(Matrix, F1)
     if F1 === F2
-        return L*L'
+        return L1*L1'
     end
     L2 = convert(Matrix, F2)
     return L1*L2'
 end
 Base.A_mul_Bc(F1::AbstractHemiCholesky, F2::AbstractHemiCholesky) = A_mul_Bt(F1, F2)
 
-Base.rank(F::HemiCholeskyXY) = size(F,1) - length(F.nullindex)
+Base.full(F::AbstractHemiCholesky) = F*F'
 
-function Base.cholfact{T}(::Type{PureHemi{T}}, A::AbstractMatrix, δ=defaultδ(A); blocksize=default_blocksize(T))
+Base.rank(F::HemiCholeskyXY) = size(F,1) - size(F.Q,2)
+function Base.rank(F::AbstractHemiCholesky)
+    nzeros = nzerodiags(F)
+    if nzeros != 0
+        error("Cannot compute rank where there are zero diagonals;\n compute rank on the output of `nullsolver(F)`")
+    end
+    size(F,1)
+end
+
+### Computing the factorization of a matrix
+
+function Base.cholfact{T}(::Type{PureHemi{T}}, A::AbstractMatrix, tol=default_tol(A); blocksize=default_blocksize(T))
     size(A, 1) == size(A, 2) || throw(DimensionMismatch("A must be square"))
     A0 = Array(floattype(T), size(A))
     copy!(A0, A)
-    cholfact!(PureHemi{T}, A0, δ; blocksize=blocksize)
+    cholfact!(PureHemi{T}, A0, tol; blocksize=blocksize)
 end
-Base.cholfact(::Type{PureHemi}, A::AbstractMatrix, δ=defaultδ(A); blocksize=default_blocksize(floattype(eltype(A)))) = cholfact(PureHemi{floattype(eltype(A))}, A, δ; blocksize=blocksize)
+Base.cholfact(::Type{PureHemi}, A::AbstractMatrix, tol=default_tol(A); blocksize=default_blocksize(floattype(eltype(A)))) = cholfact(PureHemi{floattype(eltype(A))}, A, tol; blocksize=blocksize)
 
 # Blocked, cache-friendly algorithm
-function Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi{T}}, A::AbstractMatrix{T}, δ=defaultδ(A); blocksize=default_blocksize(T))
+function Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi{T}}, A::AbstractMatrix{T}, tol=default_tol(A); blocksize=default_blocksize(T))
     size(A,1) == size(A,2) || error("A must be square")
     eltype(A)<:Real || error("element type $(eltype(A)) not yet supported")
     K = size(A, 1)
@@ -108,7 +126,7 @@ function Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi{T}}, A::AbstractMatrix
         jend = min(K, j+blocksize-1)
         B11 = sub(A, j:jend, j:jend)
         d1 = sub(d, j:jend)
-        solve_diagonal!(B11, d1, δ)
+        solve_diagonal!(B11, d1, tol)
         if jend < K
             B21 = sub(A, jend+1:K, j:jend)
             solve_columns!(B21, d1, B11)
@@ -116,17 +134,15 @@ function Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi{T}}, A::AbstractMatrix
             update_columns!(B22, d1, B21)
         end
     end
-    L = HemiCholeskyReal(A, d)
-    X, Y, H, Q, nullindex = solve_singularities(L, d)
-    HemiCholeskyXY(L, X, Y, H, Q, nullindex)
+    HemiCholeskyReal(A, d)
 end
-Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi}, A::AbstractMatrix{T}, δ=defaultδ(A); blocksize=default_blocksize(T)) = cholfact!(PureHemi{T}, A, δ; blocksize=blocksize)
+Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi}, A::AbstractMatrix{T}, tol=default_tol(A); blocksize=default_blocksize(T)) = cholfact!(PureHemi{T}, A, tol; blocksize=blocksize)
 
-function solve_diagonal!(A, d, δ)
+function solve_diagonal!(A, d, tol)
     K = size(A, 1)
     for j = 1:K
         Ajj = A[j,j]
-        if abs(Ajj) > δ
+        if abs(Ajj) > tol
             # compute ℓ (as the jth column of A)
             d[j] = sign(Ajj)
             s = sqrt(2*abs(Ajj))
@@ -135,10 +151,12 @@ function solve_diagonal!(A, d, δ)
             for i = j+1:K
                 A[i,j] *= f
             end
+            # subtract ℓ[j+1:end]⊗ℓ[j+1:end] from the lower right quadrant
             update_columns!(sub(A, j+1:K, j+1:K), d[j], slice(A, j+1:K, j))
         else
             d[j] = 0
             A[j,j] = 0
+            # ν^2 = 0, so this has no impact on the rest of the matrix
         end
     end
     A
@@ -235,44 +253,46 @@ function update_columns!(dest, d::AbstractVector, C::AbstractMatrix)
     dest
 end
 
-function solve_singularities(L, d)
-    ns = sum(d .== 0)
+
+### Solving linear systems
+
+function solve_singularities(L; tol=default_tol(L))
+    ns = nzerodiags(L)
     K = size(L, 1)
     T = real(eltype(L))
     X = Array(T, K, ns)
     H = Array(T, ns, ns)
     Y = Array(PureHemi{T}, K, ns)
-    ns == 0 && return X, Y, H, Array(T, K, 0), Int[]
+    ns == 0 && return X, Y, lufact!(H), Array(T, K, 0), falses(0)
     forwardsubst!(Y, L)
     backwardsubst!(X, H, L, Y)
-    Hf = svdfact(H)
-    # the dimensionality of the null space is the number of singular
-    # values we discard
-    s = Hf[:S]
-    tol = defaultδ(X)
-    nullrank = 0
-    for i = 1:length(s)
-        if s[i] < tol
-            s[i] = 0
-            nullrank += 1
-        end
-    end
-    if nullrank == 0
-        Q = similar(X, K, 0)
-        nullindex = Int[]
+    # Find the columns of X in the null space
+    Hmax = maxabs(H, 2)
+    nullflag = squeeze(Hmax, 2) .< tol
+    # Find an orthonormal basis for the null space
+    if sum(nullflag) == 0
+        Q = Array(T, K, 0)
     else
-        # Identify the columns of X in the null space
-        if nullrank == size(X, 2)
-            nullindex = collect(1:size(X,2))
-        else
-            LtX = nucomponent(L, X)
-            LtXmax = maxabs(LtX, 1)
-            p = sortperm(squeeze(LtXmax, 1))
-            nullindex = p[1:nullrank]
-        end
-        Q, _ = qr(X[:,nullindex])
+        Q, _ = qr(X[:,nullflag])
     end
-    X, Y, Hf, Q, nullindex
+    # Prepare the solver for the non-null components of X
+    HF = lufact!(H[!nullflag, !nullflag])
+    X, Y, HF, Q, nullflag
+end
+
+function (\){T}(L::Union{HemiCholesky{T},HemiCholeskyReal{T}}, b::AbstractVector)
+    K = length(b)
+    size(L,1) == K || throw(DimensionMismatch("rhs must have a length ($(length(b))) consistent with the size $(size(L)) of the matrix"))
+    nnull = nzerodiags(L)
+    if nnull != 0
+        error("Cannot solve directly when there are zero diagonals; try `nullsolver(L)\b`")
+    end
+    ytilde = Array(PureHemi{T}, K)
+    forwardsubst!(ytilde, L, b)
+    xtilde = Array(T, K)
+    htilde = Array(T, 0)
+    backwardsubst!(xtilde, htilde, L, ytilde)
+    xtilde
 end
 
 function (\){T}(F::HemiCholeskyXY{T}, b::AbstractVector)
@@ -280,7 +300,8 @@ function (\){T}(F::HemiCholeskyXY{T}, b::AbstractVector)
     K = length(b)
     size(L,1) == K || throw(DimensionMismatch("rhs must have a length ($(length(b))) consistent with the size $(size(L)) of the matrix"))
     ytilde = Array(PureHemi{T}, K)
-    if isempty(F.nullindex)
+    nnull = size(F.Q, 2)
+    if nnull == 0
         forwardsubst!(ytilde, L, b)
     else
         # project out the component of b perpendicular to the null space
@@ -292,10 +313,11 @@ function (\){T}(F::HemiCholeskyXY{T}, b::AbstractVector)
     xtilde = Array(T, K)
     backwardsubst!(xtilde, htilde, L, ytilde)
     ns == 0 && return xtilde
-    α = resolve(F.H, htilde)
-    x = xtilde+F.X*α
+    keep = !F.nullflag
+    α = -(F.HF\htilde[keep])
+    x = xtilde+F.X[:,keep]*α
     # Return the least-squares answer
-    if !isempty(F.nullindex)
+    if nnull > 0
         xproj = F.Q'*x
         x = x - F.Q*xproj
     end
@@ -390,20 +412,23 @@ function backwardsubst!(X, H, L::AbstractHemiCholesky, Y)
     X
 end
 
-function resolve(H, htildeα)
-    resolve(H[:U], H[:S], H[:Vt], htildeα)
-end
-
-@noinline function resolve{T}(U::AbstractMatrix{T}, s::AbstractVector{T}, Vt::AbstractMatrix{T}, htildeα::AbstractVector{T})
-    sinv = similar(s)
-    for i = 1:length(s)
-        si = s[i]
-        sinv[i] = si > 0 ? -1/si : zero(si)   # solving with -htildeα
-    end
-    Vt'*(sinv .* (U'*htildeα))
-end
-
 issingular(x::PureHemi) = x.n == 0
+
+function nzerodiags(L::HemiCholesky)
+    ns = 0
+    for i = 1:size(L,1)
+        ns += issingular(L[i,i])
+    end
+    ns
+end
+function nzerodiags(L::HemiCholeskyReal)
+    ns = 0
+    for d in L.d
+        ns += d == 0
+    end
+    ns
+end
+nzerodiags(L::HemiCholeskyXY) = size(L.X, 2)
 
 function singular_diagonals(L)
     indxsing = Int[]
@@ -416,27 +441,23 @@ function singular_diagonals(L)
 end
 singular_diagonals(L::HemiCholeskyReal) = find(L.d .== 0)
 
-# Compute the nu-component of L'*X on the rows with singular diagonals
-function nucomponent(L, X)
-    indxsing = singular_diagonals(L)
-    K, nc = size(X, 1), size(X, 2)
-    LtX = zeros(eltype(X), nc, nc)
-    for (ji,j) in enumerate(indxsing)
-        for k = 1:nc
-            tmp = LtX[ji,k]
-            for i = j+1:K
-                tmp += L.L[i,j]*X[i,k]
-            end
-            LtX[ji,k] = tmp
-        end
-    end
-    LtX
-end
-
 floattype{T<:AbstractFloat}(::Type{T}) = T
 floattype{T<:Integer}(::Type{T}) = Float64
 
 const cachesize = 2^15
 
-defaultδ(A) = 100 * size(A, 1) * eps(floattype(eltype(A))) * maxabs(A)
+default_δ(A) = 100 * size(A, 1) * eps(floattype(real(eltype(A))))
+default_tol(A) = default_δ(A) * maxabs(A)
+function default_tol(L::HemiCholeskyReal)
+    K = size(L, 1)
+    δ = default_δ(L.L)
+    K == 0 && return δ
+    ma = zero(eltype(L.L))
+    for j = 1:K
+        for i = j:K
+            ma = max(ma, abs(L.L[i,j]))
+        end
+    end
+    δ * ma
+end
 default_blocksize{T}(::Type{T}) = max(4, floor(Int, sqrt(cachesize/sizeof(T)/4)))
