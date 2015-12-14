@@ -31,6 +31,9 @@ if mult_safe
 end
 @test_throws ErrorException rank(F) == 3
 @test rank(nullsolver(F, tol=1e-10)) == 3
+# add pivoting
+Fp = cholfact(PureHemi, A, Val{true}, tol=1e-10)
+@test rank(nullsolver(Fp, tol=1e-10)) == 3
 
 # An indefinite matrix
 A = [-1 0; 0 1]
@@ -63,6 +66,9 @@ Fs = nullsolver(F)
 b = rand(size(A,2))
 x = Fs\b
 @test_approx_eq x A\b
+# also try pivoting
+Fp = cholfact(PureHemi, A, Val{true})
+@test_approx_eq x Fp\b
 
 # A singular matrix
 a1 = [0.1,0.2,0.3]
@@ -74,6 +80,9 @@ F = cholfact(PureHemi, A, tol=1e-10)
 @test_approx_eq F*F' A
 x = nullsolver(F)\b
 @test_approx_eq_eps x xsvd 1e-10
+Fp = cholfact(PureHemi, A, Val{true}, tol=1e-10)
+xp = nullsolver(Fp)\b
+@test_approx_eq_eps xp xsvd 1e-10
 
 # A singular indefinite matrix
 A = a1*a1'
@@ -86,6 +95,9 @@ b = rand(size(F, 1))
 xsvd = svdfact(A)\b
 x = Fs\b
 @test_approx_eq_eps x xsvd 1e-10
+Fp = cholfact(PureHemi, A, Val{true}, tol=1e-10)
+xp = nullsolver(Fp)\b
+@test_approx_eq_eps xp xsvd 1e-10
 
 # In-place versions. Make these big enough to test blocked algorithm.
 A = randn(201,200); A = A'*A

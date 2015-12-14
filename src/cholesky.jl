@@ -18,6 +18,11 @@ immutable HemiCholeskyReal{T} <: AbstractHemiCholesky{T}
     d::Vector{Int8}  # diagonal sign (-1, 0, or 1)
 end
 
+immutable HemiCholeskyPivot{T} <: AbstractHemiCholesky{T}
+    L::HemiCholeskyReal{T}
+    piv::Vector{Int}
+end
+
 immutable HemiCholeskyXY{T<:Real,Ltype<:AbstractHemiCholesky,Htype} <: AbstractHemiCholesky{T}
     L::Ltype
     X::Matrix{T}
@@ -28,12 +33,12 @@ immutable HemiCholeskyXY{T<:Real,Ltype<:AbstractHemiCholesky,Htype} <: AbstractH
 end
 HemiCholeskyXY(L::HemiCholeskyReal) = nullsolver(L)
 
-function nullsolver(L::HemiCholeskyReal; tol=default_tol(L))
+function nullsolver(L::Union{HemiCholeskyReal,HemiCholeskyPivot}; tol=default_tol(L))
     X, Y, HF, Q, nullflag = solve_singularities(L; tol=tol)
     HemiCholeskyXY{eltype(X), typeof(L), typeof(HF)}(L, X, Y, HF, Q, nullflag)
 end
 
-for FT in (HemiCholesky, HemiCholeskyReal, HemiCholeskyXY)
+for FT in (HemiCholesky, HemiCholeskyReal, HemiCholeskyPivot, HemiCholeskyXY)
     @eval begin
         Base.size(F::$FT) = size(F.L)
         Base.size(F::$FT, d::Integer) = size(F.L, d)
@@ -67,6 +72,7 @@ function Base.convert{T}(::Type{HemiCholesky{T}}, F::HemiCholeskyReal)
     end
     HemiCholesky(L)
 end
+Base.convert{T}(::Type{HemiCholesky{T}}, F::HemiCholeskyPivot) = convert(HemiCholesky{T}, F.L)
 Base.convert{T}(::Type{HemiCholesky{T}}, F::HemiCholeskyXY) = convert(HemiCholesky{T}, F.L)
 
 Base.convert{T}(::Type{Matrix}, F::AbstractHemiCholesky{T}) = convert(HemiCholesky{T}, F).L
@@ -75,6 +81,11 @@ Base.convert{T}(::Type{Matrix{T}}, F::AbstractHemiCholesky) = convert(HemiCholes
 function Base.show(io::IO, F::AbstractHemiCholesky)
     println(io, Base.dims2string(size(F)), " ", typeof(F), ':')
     Base.with_output_limit(()->Base.print_matrix(io, convert(Matrix, F)))
+end
+function Base.show(io::IO, F::HemiCholeskyPivot)
+    println(io, Base.dims2string(size(F)), " ", typeof(F), ':')
+    Base.with_output_limit(()->Base.print_matrix(io, convert(Matrix, F)))
+    println(io, "\n  pivot: ", F.piv)
 end
 
 function Base.A_mul_Bt(F1::AbstractHemiCholesky, F2::AbstractHemiCholesky)
@@ -100,16 +111,16 @@ end
 
 ### Computing the factorization of a matrix
 
-function Base.cholfact{T}(::Type{PureHemi{T}}, A::AbstractMatrix; tol=default_tol(A), blocksize=default_blocksize(T))
+function Base.cholfact{T}(::Type{PureHemi{T}}, A::AbstractMatrix, pivot=Val{false}; tol=default_tol(A), blocksize=default_blocksize(T))
     size(A, 1) == size(A, 2) || throw(DimensionMismatch("A must be square"))
     A0 = Array(floattype(T), size(A))
     copy!(A0, A)
-    cholfact!(PureHemi{T}, A0; tol=tol, blocksize=blocksize)
+    cholfact!(PureHemi{T}, A0, pivot; tol=tol, blocksize=blocksize)
 end
-Base.cholfact(::Type{PureHemi}, A::AbstractMatrix; tol=default_tol(A), blocksize=default_blocksize(floattype(eltype(A)))) = cholfact(PureHemi{floattype(eltype(A))}, A; tol=tol, blocksize=blocksize)
+Base.cholfact(::Type{PureHemi}, A::AbstractMatrix, pivot=Val{false}; tol=default_tol(A), blocksize=default_blocksize(floattype(eltype(A)))) = cholfact(PureHemi{floattype(eltype(A))}, A, pivot; tol=tol, blocksize=blocksize)
 
 # Blocked, cache-friendly algorithm
-function Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi{T}}, A::AbstractMatrix{T}; tol=default_tol(A), blocksize=default_blocksize(T))
+function Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi{T}}, A::AbstractMatrix{T}, pivot::Type{Val{false}}=Val{false}; tol=default_tol(A), blocksize=default_blocksize(T))
     size(A,1) == size(A,2) || error("A must be square")
     eltype(A)<:Real || error("element type $(eltype(A)) not yet supported")
     K = size(A, 1)
@@ -136,11 +147,78 @@ function Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi{T}}, A::AbstractMatrix
     end
     HemiCholeskyReal(A, d)
 end
-Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi}, A::AbstractMatrix{T}; tol=default_tol(A), blocksize=default_blocksize(T)) = cholfact!(PureHemi{T}, A; tol=tol, blocksize=blocksize)
 
-function solve_diagonal!(A, d, tol)
+# Version with pivoting
+function Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi{T}}, A::AbstractMatrix{T}, pivot::Type{Val{true}}; tol=default_tol(A), blocksize=default_blocksize(T))
+    size(A,1) == size(A,2) || error("A must be square")
+    eltype(A)<:Real || error("element type $(eltype(A)) not yet supported")
     K = size(A, 1)
+    d = Array(Int8, K)
+    piv = collect(1:K)
+    blocksize = 1
+    for j = 1:blocksize:K
+        jend = min(K, j+blocksize-1)
+        solve_diagonal_pivot!(A, d, piv, tol, j:jend)
+        if jend < K
+            B11 = sub(A, j:jend, j:jend)
+            d1 = sub(d, j:jend)
+            B21 = sub(A, jend+1:K, j:jend)
+            solve_columns!(B21, d1, B11)
+            B22 = sub(A, jend+1:K, jend+1:K)
+            update_columns!(B22, d1, B21)
+        end
+    end
+    HemiCholeskyPivot(HemiCholeskyReal(A, d), piv)
+end
+
+
+Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi}, A::AbstractMatrix{T}, pivot=Val{false}; tol=default_tol(A), blocksize=default_blocksize(T)) = cholfact!(PureHemi{T}, A; tol=tol, blocksize=blocksize)
+
+
+
+function solve_diagonal!(B, d, tol)
+    K = size(B, 1)
     for j = 1:K
+        Bjj = B[j,j]
+        if abs(Bjj) > tol
+            # compute ℓ (as the jth column of B)
+            d[j] = sign(Bjj)
+            s = sqrt(2*abs(Bjj))
+            B[j,j] = s/2
+            f = d[j]/s
+            for i = j+1:K
+                B[i,j] *= f
+            end
+            # subtract ℓ[j+1:end]⊗ℓ[j+1:end] from the lower right quadrant
+            update_columns!(sub(B, j+1:K, j+1:K), d[j], slice(B, j+1:K, j))
+        else
+            d[j] = 0
+            B[j,j] = 0
+            # ν^2 = 0, so this has no impact on the rest of the matrix
+        end
+    end
+    B
+end
+
+# Here, pivoting applies to the whole matrix, so we don't pass in a view.
+# The jrange input describes the columns we're supposed to handle now.
+function solve_diagonal_pivot!(A, d, piv, tol, jrange)
+    K, KA = last(jrange), size(A, 1)
+    for j in jrange
+        # Find the remaining diagonal with largest magnitude
+        Amax = zero(eltype(A))
+        jmax = j-1
+        for jj = j:KA
+            tmp = abs(A[jj,jj])
+            if tmp > Amax
+                Amax = tmp
+                jmax = jj
+            end
+        end
+        if jmax != j
+            pivot!(A, j, jmax)
+            piv[j], piv[jmax] = piv[jmax], piv[j]
+        end
         Ajj = A[j,j]
         if abs(Ajj) > tol
             # compute ℓ (as the jth column of A)
@@ -279,40 +357,43 @@ function solve_singularities(L; tol=default_tol(L))
     HF = lufact!(H[!nullflag, !nullflag])
     X, Y, HF, Q, nullflag
 end
+solve_singularities(L::HemiCholeskyPivot; tol=default_tol(L)) = solve_singularities(L.L; tol=tol)
 
-function (\){T}(L::Union{HemiCholesky{T},HemiCholeskyReal{T}}, b::AbstractVector)
+function (\){T}(L::Union{HemiCholesky{T},HemiCholeskyReal{T},HemiCholeskyPivot{T}}, b::AbstractVector; forcenull::Bool=false)
     K = length(b)
     size(L,1) == K || throw(DimensionMismatch("rhs must have a length ($(length(b))) consistent with the size $(size(L)) of the matrix"))
-    nnull = nzerodiags(L)
-    if nnull != 0
-        error("Cannot solve directly when there are zero diagonals; try `nullsolver(L)\b`")
+    bp, Lp = pivot(L, b)
+    nnull = nzerodiags(Lp)
+    if nnull != 0 && !forcenull
+        error("There were zero diagonals; use `nullsolver(L)\b` or, if you're sure all zeros correspond to null directions, (\)(L, b, forcenull=true)`.")
     end
     ytilde = Array(PureHemi{T}, K)
-    forwardsubst!(ytilde, L, b)
+    forwardsubst!(ytilde, Lp, bp)
     xtilde = Array(T, K)
     htilde = Array(T, 0)
-    backwardsubst!(xtilde, htilde, L, ytilde)
-    xtilde
+    backwardsubst!(xtilde, htilde, Lp, ytilde)
+    ipivot(L, xtilde)
 end
 
 function (\){T}(F::HemiCholeskyXY{T}, b::AbstractVector)
     L = F.L
     K = length(b)
     size(L,1) == K || throw(DimensionMismatch("rhs must have a length ($(length(b))) consistent with the size $(size(L)) of the matrix"))
+    bp, Lp = pivot(L, b)
     ytilde = Array(PureHemi{T}, K)
     nnull = size(F.Q, 2)
     if nnull == 0
-        forwardsubst!(ytilde, L, b)
+        forwardsubst!(ytilde, Lp, bp)
     else
-        # project out the component of b perpendicular to the null space
-        bproj = F.Q'*b
-        forwardsubst!(ytilde, L, b - F.Q*bproj)
+        # project out the component of bp perpendicular to the null space
+        bproj = F.Q'*bp
+        forwardsubst!(ytilde, Lp, bp - F.Q*bproj)
     end
     ns = size(F.X, 2)
     htilde = Array(T, ns)
     xtilde = Array(T, K)
-    backwardsubst!(xtilde, htilde, L, ytilde)
-    ns == 0 && return xtilde
+    backwardsubst!(xtilde, htilde, Lp, ytilde)
+    ns == 0 && return ipivot(L, xtilde)
     keep = !F.nullflag
     α = -(F.HF\htilde[keep])
     x = xtilde+F.X[:,keep]*α
@@ -321,7 +402,7 @@ function (\){T}(F::HemiCholeskyXY{T}, b::AbstractVector)
         xproj = F.Q'*x
         x = x - F.Q*xproj
     end
-    x
+    ipivot(L, x)
 end
 
 # Forward-substitution with right hand side zero: find the
@@ -412,6 +493,28 @@ function backwardsubst!(X, H, L::AbstractHemiCholesky, Y)
     X
 end
 
+# Diagonal pivoting (row&column swap) for a lower triangular matrix
+function pivot!(A, i::Integer, j::Integer)
+    i, j = min(i,j), max(i,j)
+    for k = 1:i-1
+        A[i,k], A[j,k] = A[j,k], A[i,k]  # don't need this?
+    end
+    A[i,i], A[j,j] = A[j,j], A[i,i]
+    for k = i+1:j-1
+        A[k,i], A[j,k] = A[j,k], A[k,i]
+    end
+    for k = j+1:size(A,1)
+        A[k,i], A[k,j] = A[k,j], A[k,i]
+    end
+    A
+end
+
+pivot(L, b) = b, L
+pivot(L::HemiCholeskyPivot, b) = b[L.piv], L.L
+
+ipivot(L, b) = b
+ipivot(L::HemiCholeskyPivot, b) = ipermute!(copy(b), L.piv)
+
 issingular(x::PureHemi) = x.n == 0
 
 function nzerodiags(L::HemiCholesky)
@@ -460,4 +563,5 @@ function default_tol(L::HemiCholeskyReal)
     end
     δ * ma
 end
+default_tol(L::HemiCholeskyPivot) = default_tol(L.L)
 default_blocksize{T}(::Type{T}) = max(4, floor(Int, sqrt(cachesize/sizeof(T)/4)))
