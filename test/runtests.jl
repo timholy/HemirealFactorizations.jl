@@ -25,7 +25,7 @@ x = F\b
 @test_approx_eq x A\b
 
 A = rand(3,5); A = A'*A
-F = cholfact(PureHemi, A, 1e-10)
+F = cholfact(PureHemi, A, tol=1e-10)
 if mult_safe
     @test_approx_eq F*F' A
 end
@@ -70,7 +70,7 @@ a2 = [-1.2,0.8,3.1]
 A = a1*a1' + a2*a2'
 b = rand(size(A,2))
 xsvd = svdfact(A)\b
-F = cholfact(PureHemi, A, 1e-10)
+F = cholfact(PureHemi, A, tol=1e-10)
 @test_approx_eq F*F' A
 x = nullsolver(F)\b
 @test_approx_eq_eps x xsvd 1e-10

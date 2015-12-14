@@ -100,16 +100,16 @@ end
 
 ### Computing the factorization of a matrix
 
-function Base.cholfact{T}(::Type{PureHemi{T}}, A::AbstractMatrix, tol=default_tol(A); blocksize=default_blocksize(T))
+function Base.cholfact{T}(::Type{PureHemi{T}}, A::AbstractMatrix; tol=default_tol(A), blocksize=default_blocksize(T))
     size(A, 1) == size(A, 2) || throw(DimensionMismatch("A must be square"))
     A0 = Array(floattype(T), size(A))
     copy!(A0, A)
-    cholfact!(PureHemi{T}, A0, tol; blocksize=blocksize)
+    cholfact!(PureHemi{T}, A0; tol=tol, blocksize=blocksize)
 end
-Base.cholfact(::Type{PureHemi}, A::AbstractMatrix, tol=default_tol(A); blocksize=default_blocksize(floattype(eltype(A)))) = cholfact(PureHemi{floattype(eltype(A))}, A, tol; blocksize=blocksize)
+Base.cholfact(::Type{PureHemi}, A::AbstractMatrix; tol=default_tol(A), blocksize=default_blocksize(floattype(eltype(A)))) = cholfact(PureHemi{floattype(eltype(A))}, A; tol=tol, blocksize=blocksize)
 
 # Blocked, cache-friendly algorithm
-function Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi{T}}, A::AbstractMatrix{T}, tol=default_tol(A); blocksize=default_blocksize(T))
+function Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi{T}}, A::AbstractMatrix{T}; tol=default_tol(A), blocksize=default_blocksize(T))
     size(A,1) == size(A,2) || error("A must be square")
     eltype(A)<:Real || error("element type $(eltype(A)) not yet supported")
     K = size(A, 1)
@@ -136,7 +136,7 @@ function Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi{T}}, A::AbstractMatrix
     end
     HemiCholeskyReal(A, d)
 end
-Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi}, A::AbstractMatrix{T}, tol=default_tol(A); blocksize=default_blocksize(T)) = cholfact!(PureHemi{T}, A, tol; blocksize=blocksize)
+Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi}, A::AbstractMatrix{T}; tol=default_tol(A), blocksize=default_blocksize(T)) = cholfact!(PureHemi{T}, A; tol=tol, blocksize=blocksize)
 
 function solve_diagonal!(A, d, tol)
     K = size(A, 1)
