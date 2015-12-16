@@ -549,7 +549,7 @@ floattype{T<:Integer}(::Type{T}) = Float64
 
 const cachesize = 2^15
 
-default_δ(A) = 100 * size(A, 1) * eps(floattype(real(eltype(A))))
+default_δ(A) = 10 * size(A, 1) * eps(floattype(real(eltype(A))))
 default_tol(A) = default_δ(A) * maxabs(A)
 function default_tol(L::HemiCholeskyReal)
     K = size(L, 1)
