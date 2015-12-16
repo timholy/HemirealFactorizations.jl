@@ -365,12 +365,12 @@ function (\){T}(L::Union{HemiCholesky{T},HemiCholeskyReal{T},HemiCholeskyPivot{T
     bp, Lp = pivot(L, b)
     nnull = nzerodiags(Lp)
     if nnull != 0 && !forcenull
-        error("There were zero diagonals; use `nullsolver(L)\b` or, if you're sure all zeros correspond to null directions, (\)(L, b, forcenull=true)`.")
+        error("There were zero diagonals; use `nullsolver(L)\\b` or, if you're sure all zeros correspond to null directions, (\\)(L, b, forcenull=true)`.")
     end
     ytilde = Array(PureHemi{T}, K)
     forwardsubst!(ytilde, Lp, bp)
     xtilde = Array(T, K)
-    htilde = Array(T, 0)
+    htilde = Array(T, nnull)
     backwardsubst!(xtilde, htilde, Lp, ytilde)
     ipivot(L, xtilde)
 end
