@@ -215,7 +215,7 @@ function solve_diagonal_pivot!(A, d, piv, tol, jrange)
                 jmax = jj
             end
         end
-        if jmax != j
+        if jmax > j
             pivot!(A, j, jmax)
             piv[j], piv[jmax] = piv[jmax], piv[j]
         end
