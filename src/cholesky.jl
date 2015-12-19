@@ -166,15 +166,13 @@ function Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi{T}}, A::AbstractMatrix
     K = size(A, 1)
     d = Array(Int8, K)
     piv = collect(1:K)
-    blocksize = 1
+    Ad = diag(A)
     for j = 1:blocksize:K
         jend = min(K, j+blocksize-1)
-        solve_diagonal_pivot!(A, d, piv, tol, j:jend)
+        solve_columns_pivot!(A, d, piv, Ad, tol, j:jend)
         if jend < K
-            B11 = sub(A, j:jend, j:jend)
             d1 = sub(d, j:jend)
             B21 = sub(A, jend+1:K, j:jend)
-            solve_columns!(B21, d1, B11)
             B22 = sub(A, jend+1:K, jend+1:K)
             update_columns!(B22, d1, B21)
         end
@@ -184,7 +182,6 @@ end
 
 
 Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi}, A::AbstractMatrix{T}, pivot=Val{false}; tol=default_tol(A), blocksize=default_blocksize(T)) = cholfact!(PureHemi{T}, A; tol=tol, blocksize=blocksize)
-
 
 
 function solve_diagonal!(B, d, tol)
@@ -213,14 +210,15 @@ end
 
 # Here, pivoting applies to the whole matrix, so we don't pass in a view.
 # The jrange input describes the columns we're supposed to handle now.
-function solve_diagonal_pivot!(A, d, piv, tol, jrange)
+function solve_columns_pivot!(A, d, piv, Ad, tol, jrange)
     K, KA = last(jrange), size(A, 1)
+    jmin = first(jrange)
     for j in jrange
         # Find the remaining diagonal with largest magnitude
         Amax = zero(eltype(A))
         jmax = j-1
         for jj = j:KA
-            tmp = abs(A[jj,jj])
+            tmp = abs(Ad[jj])
             if tmp > Amax
                 Amax = tmp
                 jmax = jj
@@ -228,24 +226,37 @@ function solve_diagonal_pivot!(A, d, piv, tol, jrange)
         end
         if jmax > j
             pivot!(A, j, jmax)
+            Ad[j], Ad[jmax] = Ad[jmax], Ad[j]
             piv[j], piv[jmax] = piv[jmax], piv[j]
         end
         Ajj = A[j,j]
+        for k = jmin:j-1
+            tmp = A[j,k]
+            Ajj -= 2*d[k]*tmp*tmp
+        end
         if abs(Ajj) > tol
             # compute ℓ (as the jth column of A)
             d[j] = sign(Ajj)
             s = sqrt(2*abs(Ajj))
             A[j,j] = s/2
             f = d[j]/s
-            for i = j+1:K
-                A[i,j] *= f
-            end
-            # subtract ℓ[j+1:end]⊗ℓ[j+1:end] from the lower right quadrant
-            update_columns!(sub(A, j+1:K, j+1:K), d[j], slice(A, j+1:K, j))
         else
             d[j] = 0
             A[j,j] = 0
-            # ν^2 = 0, so this has no impact on the rest of the matrix
+            f = one(s)
+        end
+        for k = jmin:j-1
+            @inbounds ck = 2*d[k]*A[j,k]
+            @simd for i = j+1:KA
+                @inbounds A[i,j] -= ck*A[i,k]
+            end
+        end
+        dj = d[j]
+        @simd for i = j+1:KA
+            @inbounds tmp = A[i,j]
+            tmp *= f
+            @inbounds A[i,j] = tmp
+            @inbounds Ad[i] -= 2*dj*tmp*tmp
         end
     end
     A
@@ -508,7 +519,7 @@ end
 function pivot!(A, i::Integer, j::Integer)
     i, j = min(i,j), max(i,j)
     for k = 1:i-1
-        A[i,k], A[j,k] = A[j,k], A[i,k]  # don't need this?
+        A[i,k], A[j,k] = A[j,k], A[i,k]
     end
     A[i,i], A[j,j] = A[j,j], A[i,i]
     for k = i+1:j-1
@@ -542,6 +553,7 @@ function nzerodiags(L::HemiCholeskyReal)
     end
     ns
 end
+nzerodiags(L::HemiCholeskyPivot) = nzerodiags(L.L)
 nzerodiags(L::HemiCholeskyXY) = size(L.X, 2)
 
 function singular_diagonals(L)

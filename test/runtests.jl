@@ -1,20 +1,26 @@
 using HemirealNumbers, HemirealFactorizations
 using Base.Test
+if VERSION >= v"0.5.0-dev"
+    using Combinatorics
+end
 
 const mult_safe = VERSION >= v"0.5.0-dev"   # julia #14293
 
-A = [2 0; 0 2]
-F = cholfact(PureHemi, A)
-@test convert(Matrix, F) == [μ+ν 0; 0 μ+ν]
-@test rank(F) == 2
-A = [2 1; 1 2]
-F = cholfact(PureHemi, A)
-@test convert(Matrix, F) == [μ+ν 0; (μ+ν)/2 (sqrt(3)/2)*(μ+ν)]
-@test_approx_eq F*F' A
-b = rand(size(A,2))
-x = F\b
-@test_approx_eq x A\b
+for p in (Val{false}, Val{true})
+    A = [2 0; 0 2]
+    F = cholfact(PureHemi, A, p)
+    @test convert(Matrix, F) == [μ+ν 0; 0 μ+ν]
+    @test rank(F) == 2
+    A = [2 1; 1 2]
+    F = cholfact(PureHemi, A, p)
+    @test convert(Matrix, F) == [μ+ν 0; (μ+ν)/2 (sqrt(3)/2)*(μ+ν)]
+    @test_approx_eq F*F' A
+    b = rand(size(A,2))
+    x = F\b
+    @test_approx_eq x A\b
+end
 
+# larger positive-definite matrix
 A = rand(7,5); A = A'*A
 F = cholfact(PureHemi, A)
 if mult_safe
@@ -24,6 +30,7 @@ b = rand(size(A,2))
 x = F\b
 @test_approx_eq x A\b
 
+# singular matrix
 A = rand(3,5); A = A'*A
 F = cholfact(PureHemi, A, tol=1e-10)
 if mult_safe
@@ -70,6 +77,29 @@ x = Fs\b
 Fp = cholfact(PureHemi, A, Val{true})
 @test_approx_eq x Fp\b
 
+# Blocked pivoting
+A = zeros(4,4)
+counter = 0
+for j = 1:4
+    for i = j:4
+        A[i,j] = A[j,i] = (counter+=1)
+    end
+end
+F = cholfact(PureHemi, A, Val{true})
+p = [4,1,2,3]
+@test F.piv == p
+@test_approx_eq F.L*F.L' A[p,p]
+@test_approx_eq F*F' A
+Fb = cholfact(PureHemi, A, Val{true}, blocksize=2)
+@test Fb.piv == p
+@test_approx_eq F.L.L Fb.L.L
+for pp in permutations([1,2,3,4])
+    Fb = cholfact(PureHemi, A[pp,pp], Val{true}, blocksize=2)
+    @test Fb.piv == permute!(invperm(pp), p)
+    @test_approx_eq LowerTriangular(F.L.L) LowerTriangular(Fb.L.L)
+    @test_approx_eq Fb*Fb' A[pp,pp]
+end
+
 # A singular matrix
 a1 = [0.1,0.2,0.3]
 a2 = [-1.2,0.8,3.1]
@@ -100,18 +130,20 @@ xp = nullsolver(Fp)\b
 @test_approx_eq_eps xp xsvd 1e-10
 
 # In-place versions. Make these big enough to test blocked algorithm.
-A = randn(201,200); A = A'*A
-F = cholfact!(PureHemi, copy(A))
-if mult_safe
-    @test_approx_eq F*F' A
-end
-A[1,1] = 0
-F = cholfact!(PureHemi, copy(A))
-if mult_safe
-    @test_approx_eq F*F' A
-end
-A = randn(199,200); A = A'*A
-F = cholfact!(PureHemi, copy(A))
-if mult_safe
-    @test_approx_eq F*F' A
+for p in (Val{false}, Val{true})
+    A = randn(201,200); A = A'*A
+    F = cholfact!(PureHemi, copy(A), p)
+    if mult_safe
+        @test_approx_eq F*F' A
+    end
+    A[1,1] = 0
+    F = cholfact!(PureHemi, copy(A), p)
+    if mult_safe
+        @test_approx_eq F*F' A
+    end
+    A = randn(199,200); A = A'*A
+    F = cholfact!(PureHemi, copy(A), p)
+    if mult_safe
+        @test_approx_eq F*F' A
+    end
 end
