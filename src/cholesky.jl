@@ -58,8 +58,8 @@ end
     ifelse(i >= j, Base.unsafe_getindex(F, i, j), PureHemi{T}(0, 0))
 end
 
-Base.convert{T}(::Type{HemiCholesky}, F::AbstractHemiCholesky{T}) = convert(HemiCholesky{T}, F)
-function Base.convert{T}(::Type{HemiCholesky{T}}, F::HemiCholeskyReal)
+hrmatrix{T}(::Type{T}, F::HemiCholesky) = convert(Matrix{PureHemi{T}}, F.L)
+function hrmatrix{T}(::Type{T}, F::HemiCholeskyReal)
     L = Array(PureHemi{T}, size(F))
     K = size(F, 1)
     for j = 1:K
@@ -70,23 +70,34 @@ function Base.convert{T}(::Type{HemiCholesky{T}}, F::HemiCholeskyReal)
             L[i,j] = F[i,j]
         end
     end
-    HemiCholesky(L)
+    L
 end
-Base.convert{T}(::Type{HemiCholesky{T}}, F::HemiCholeskyPivot) = convert(HemiCholesky{T}, F.L)
-Base.convert{T}(::Type{HemiCholesky{T}}, F::HemiCholeskyXY) = convert(HemiCholesky{T}, F.L)
+hrmatrix{T}(::Type{T}, F::HemiCholeskyPivot) = hrmatrix(T, F.L)
+hrmatrix{T}(::Type{T}, F::HemiCholeskyXY) = hrmatrix(T, F.L)
 
-Base.convert{T}(::Type{Matrix}, F::AbstractHemiCholesky{T}) = convert(HemiCholesky{T}, F).L
-Base.convert{T}(::Type{Matrix{T}}, F::AbstractHemiCholesky) = convert(HemiCholesky{T}, F).L
+hrmatrixpiv{T}(::Type{T}, F::HemiCholesky)      = hrmatrix(T, F)
+hrmatrixpiv{T}(::Type{T}, F::HemiCholeskyReal)  = hrmatrix(T, F)
+hrmatrixpiv{T}(::Type{T}, F::HemiCholeskyPivot) = hrmatrix(T, F)[invperm(F.piv),:]
+hrmatrixpiv{T}(::Type{T}, F::HemiCholeskyXY)    = hrmatrixpiv(T, F.L)
+
+Base.convert{T}(::Type{HemiCholesky{T}}, F::HemiCholesky) = hrmatrix(T, F)
+Base.convert{T}(::Type{HemiCholesky{T}}, F::HemiCholeskyReal) = hrmatrix(T, F)
+Base.convert{T}(::Type{HemiCholesky{T}}, F::HemiCholeskyXY) = convert(HemiCholesky{T}, F.L)
+Base.convert{T}(::Type{HemiCholesky}, F::AbstractHemiCholesky{T}) = convert(HemiCholesky{T}, F)
+
+Base.convert{T}(::Type{Matrix}, F::AbstractHemiCholesky{T}) = hrmatrixpiv(T, F)
+Base.convert{T}(::Type{Matrix{T}}, F::AbstractHemiCholesky) = hrmatrixpiv(T, F)
 
 function Base.show(io::IO, F::AbstractHemiCholesky)
     println(io, Base.dims2string(size(F)), " ", typeof(F), ':')
-    Base.with_output_limit(()->Base.print_matrix(io, convert(Matrix, F)))
+    _show(io, F)
 end
-function Base.show(io::IO, F::HemiCholeskyPivot)
-    println(io, Base.dims2string(size(F)), " ", typeof(F), ':')
-    Base.with_output_limit(()->Base.print_matrix(io, convert(Matrix, F)))
+_show{T}(io::IO, F::AbstractHemiCholesky{T}) = Base.with_output_limit(()->Base.print_matrix(io, hrmatrix(T, F)))
+function _show{T}(io::IO, F::HemiCholeskyPivot{T})
+    Base.with_output_limit(()->Base.print_matrix(io, hrmatrix(T, F)))
     println(io, "\n  pivot: ", F.piv)
 end
+_show{T}(io::IO, F::HemiCholeskyXY{T}) = _show(io, F.L)
 
 function Base.A_mul_Bt(F1::AbstractHemiCholesky, F2::AbstractHemiCholesky)
     L1 = convert(Matrix, F1)
@@ -155,15 +166,13 @@ function Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi{T}}, A::AbstractMatrix
     K = size(A, 1)
     d = Array(Int8, K)
     piv = collect(1:K)
-    blocksize = 1
+    Ad = diag(A)
     for j = 1:blocksize:K
         jend = min(K, j+blocksize-1)
-        solve_diagonal_pivot!(A, d, piv, tol, j:jend)
+        solve_columns_pivot!(A, d, piv, Ad, tol, j:jend)
         if jend < K
-            B11 = sub(A, j:jend, j:jend)
             d1 = sub(d, j:jend)
             B21 = sub(A, jend+1:K, j:jend)
-            solve_columns!(B21, d1, B11)
             B22 = sub(A, jend+1:K, jend+1:K)
             update_columns!(B22, d1, B21)
         end
@@ -173,7 +182,6 @@ end
 
 
 Base.cholfact!{T<:AbstractFloat}(::Type{PureHemi}, A::AbstractMatrix{T}, pivot=Val{false}; tol=default_tol(A), blocksize=default_blocksize(T)) = cholfact!(PureHemi{T}, A; tol=tol, blocksize=blocksize)
-
 
 
 function solve_diagonal!(B, d, tol)
@@ -202,14 +210,15 @@ end
 
 # Here, pivoting applies to the whole matrix, so we don't pass in a view.
 # The jrange input describes the columns we're supposed to handle now.
-function solve_diagonal_pivot!(A, d, piv, tol, jrange)
+function solve_columns_pivot!(A, d, piv, Ad, tol, jrange)
     K, KA = last(jrange), size(A, 1)
+    jmin = first(jrange)
     for j in jrange
         # Find the remaining diagonal with largest magnitude
         Amax = zero(eltype(A))
         jmax = j-1
         for jj = j:KA
-            tmp = abs(A[jj,jj])
+            tmp = abs(Ad[jj])
             if tmp > Amax
                 Amax = tmp
                 jmax = jj
@@ -217,24 +226,37 @@ function solve_diagonal_pivot!(A, d, piv, tol, jrange)
         end
         if jmax > j
             pivot!(A, j, jmax)
+            Ad[j], Ad[jmax] = Ad[jmax], Ad[j]
             piv[j], piv[jmax] = piv[jmax], piv[j]
         end
         Ajj = A[j,j]
+        for k = jmin:j-1
+            tmp = A[j,k]
+            Ajj -= 2*d[k]*tmp*tmp
+        end
         if abs(Ajj) > tol
             # compute ℓ (as the jth column of A)
             d[j] = sign(Ajj)
             s = sqrt(2*abs(Ajj))
             A[j,j] = s/2
             f = d[j]/s
-            for i = j+1:K
-                A[i,j] *= f
-            end
-            # subtract ℓ[j+1:end]⊗ℓ[j+1:end] from the lower right quadrant
-            update_columns!(sub(A, j+1:K, j+1:K), d[j], slice(A, j+1:K, j))
         else
             d[j] = 0
             A[j,j] = 0
-            # ν^2 = 0, so this has no impact on the rest of the matrix
+            f = one(s)
+        end
+        for k = jmin:j-1
+            @inbounds ck = 2*d[k]*A[j,k]
+            @simd for i = j+1:KA
+                @inbounds A[i,j] -= ck*A[i,k]
+            end
+        end
+        dj = d[j]
+        @simd for i = j+1:KA
+            @inbounds tmp = A[i,j]
+            tmp *= f
+            @inbounds A[i,j] = tmp
+            @inbounds Ad[i] -= 2*dj*tmp*tmp
         end
     end
     A
@@ -497,7 +519,7 @@ end
 function pivot!(A, i::Integer, j::Integer)
     i, j = min(i,j), max(i,j)
     for k = 1:i-1
-        A[i,k], A[j,k] = A[j,k], A[i,k]  # don't need this?
+        A[i,k], A[j,k] = A[j,k], A[i,k]
     end
     A[i,i], A[j,j] = A[j,j], A[i,i]
     for k = i+1:j-1
@@ -531,6 +553,7 @@ function nzerodiags(L::HemiCholeskyReal)
     end
     ns
 end
+nzerodiags(L::HemiCholeskyPivot) = nzerodiags(L.L)
 nzerodiags(L::HemiCholeskyXY) = size(L.X, 2)
 
 function singular_diagonals(L)
