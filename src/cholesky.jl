@@ -58,8 +58,8 @@ end
     ifelse(i >= j, Base.unsafe_getindex(F, i, j), PureHemi{T}(0, 0))
 end
 
-Base.convert{T}(::Type{HemiCholesky}, F::AbstractHemiCholesky{T}) = convert(HemiCholesky{T}, F)
-function Base.convert{T}(::Type{HemiCholesky{T}}, F::HemiCholeskyReal)
+hrmatrix{T}(::Type{T}, F::HemiCholesky) = convert(Matrix{PureHemi{T}}, F.L)
+function hrmatrix{T}(::Type{T}, F::HemiCholeskyReal)
     L = Array(PureHemi{T}, size(F))
     K = size(F, 1)
     for j = 1:K
@@ -70,23 +70,34 @@ function Base.convert{T}(::Type{HemiCholesky{T}}, F::HemiCholeskyReal)
             L[i,j] = F[i,j]
         end
     end
-    HemiCholesky(L)
+    L
 end
-Base.convert{T}(::Type{HemiCholesky{T}}, F::HemiCholeskyPivot) = convert(HemiCholesky{T}, F.L)
-Base.convert{T}(::Type{HemiCholesky{T}}, F::HemiCholeskyXY) = convert(HemiCholesky{T}, F.L)
+hrmatrix{T}(::Type{T}, F::HemiCholeskyPivot) = hrmatrix(T, F.L)
+hrmatrix{T}(::Type{T}, F::HemiCholeskyXY) = hrmatrix(T, F.L)
 
-Base.convert{T}(::Type{Matrix}, F::AbstractHemiCholesky{T}) = convert(HemiCholesky{T}, F).L
-Base.convert{T}(::Type{Matrix{T}}, F::AbstractHemiCholesky) = convert(HemiCholesky{T}, F).L
+hrmatrixpiv{T}(::Type{T}, F::HemiCholesky)      = hrmatrix(T, F)
+hrmatrixpiv{T}(::Type{T}, F::HemiCholeskyReal)  = hrmatrix(T, F)
+hrmatrixpiv{T}(::Type{T}, F::HemiCholeskyPivot) = hrmatrix(T, F)[invperm(F.piv),:]
+hrmatrixpiv{T}(::Type{T}, F::HemiCholeskyXY)    = hrmatrixpiv(T, F.L)
+
+Base.convert{T}(::Type{HemiCholesky{T}}, F::HemiCholesky) = hrmatrix(T, F)
+Base.convert{T}(::Type{HemiCholesky{T}}, F::HemiCholeskyReal) = hrmatrix(T, F)
+Base.convert{T}(::Type{HemiCholesky{T}}, F::HemiCholeskyXY) = convert(HemiCholesky{T}, F.L)
+Base.convert{T}(::Type{HemiCholesky}, F::AbstractHemiCholesky{T}) = convert(HemiCholesky{T}, F)
+
+Base.convert{T}(::Type{Matrix}, F::AbstractHemiCholesky{T}) = hrmatrixpiv(T, F)
+Base.convert{T}(::Type{Matrix{T}}, F::AbstractHemiCholesky) = hrmatrixpiv(T, F)
 
 function Base.show(io::IO, F::AbstractHemiCholesky)
     println(io, Base.dims2string(size(F)), " ", typeof(F), ':')
-    Base.with_output_limit(()->Base.print_matrix(io, convert(Matrix, F)))
+    _show(io, F)
 end
-function Base.show(io::IO, F::HemiCholeskyPivot)
-    println(io, Base.dims2string(size(F)), " ", typeof(F), ':')
-    Base.with_output_limit(()->Base.print_matrix(io, convert(Matrix, F)))
+_show{T}(io::IO, F::AbstractHemiCholesky{T}) = Base.with_output_limit(()->Base.print_matrix(io, hrmatrix(T, F)))
+function _show{T}(io::IO, F::HemiCholeskyPivot{T})
+    Base.with_output_limit(()->Base.print_matrix(io, hrmatrix(T, F)))
     println(io, "\n  pivot: ", F.piv)
 end
+_show{T}(io::IO, F::HemiCholeskyXY{T}) = _show(io, F.L)
 
 function Base.A_mul_Bt(F1::AbstractHemiCholesky, F2::AbstractHemiCholesky)
     L1 = convert(Matrix, F1)
