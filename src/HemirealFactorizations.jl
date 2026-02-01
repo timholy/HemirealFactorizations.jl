@@ -1,7 +1,6 @@
-__precompile__()
-
 module HemirealFactorizations
 
+using LinearAlgebra
 using HemirealNumbers
 
 include("cholesky.jl")
