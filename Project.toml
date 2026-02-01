@@ -1,0 +1,20 @@
+name = "HemirealFactorizations"
+uuid = "2fd499c8-e596-4018-9d8e-c58a685a42cc"
+version = "1.0.0-DEV"
+authors = ["Tim Holy <tim.holy@gmail.com> and contributors"]
+
+[deps]
+HemirealNumbers = "0a1bf870-1ec7-454f-b2b3-83307695f2d3"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+
+[compat]
+HemirealNumbers = "1"
+LinearAlgebra = "1"
+julia = "1.10"
+
+[extras]
+Combinatorics = "861a8166-3701-5b0c-9a16-15d98fcdc6aa"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Combinatorics", "Test"]
