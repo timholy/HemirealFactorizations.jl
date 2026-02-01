@@ -40,7 +40,7 @@ jobs:
         run: |
           using Pkg
           Pkg.add([
-            PackageSpec(url="git@github.com:timholy/HemirealNumbers.jl.git"),
+            PackageSpec(url="https://github.com/timholy/HemirealNumbers.jl.git"),
             ])
           Pkg.build()
         shell: julia --color=yes --project="@." {0}
