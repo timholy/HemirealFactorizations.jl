@@ -11,17 +11,15 @@ Base.size(F::SparseHemiCholeskyReal) = size(F.L)
 Base.size(F::SparseHemiCholeskyReal, dim::Integer) = size(F.L, dim)
 Base.eltype(::Type{SparseHemiCholeskyReal{T}}) where T = PureHemi{T}
 
-function unsafe_getindex(F::SparseHemiCholeskyReal{T}, i::Integer, j::Integer) where T
+function _getL(F::SparseHemiCholeskyReal{T}, i::Integer, j::Integer) where T
     dj = F.d[j]
     nu = F.L[i,j]
     ifelse(dj == 0 && i == j, PureHemi{T}(1, 0), PureHemi{T}(dj * nu, nu))
 end
 
-function Base.getindex(F::SparseHemiCholeskyReal{T}, i::Integer, j::Integer) where T
-    ifelse(i >= j, unsafe_getindex(F, i, j), PureHemi{T}(0, 0))
-end
-
-hrmatrixpiv(::Type{T}, F::SparseHemiCholeskyReal) where T = hrmatrix(T, F)
+Base.copy(F::SparseHemiCholeskyReal) = SparseHemiCholeskyReal(copy(F.L), copy(F.d))
+Base.:(==)(F1::SparseHemiCholeskyReal, F2::SparseHemiCholeskyReal) = F1.L == F2.L && F1.d == F2.d
+LinearAlgebra.isposdef(F::SparseHemiCholeskyReal) = all(==(Int8(1)), F.d)
 
 function hrmatrix(::Type{T}, F::SparseHemiCholeskyReal) where T
     n = size(F, 1)
@@ -31,7 +29,7 @@ function hrmatrix(::Type{T}, F::SparseHemiCholeskyReal) where T
             L[i,j] = zero(PureHemi{T})
         end
         for i = j:n
-            L[i,j] = F[i,j]
+            L[i,j] = _getL(F, i, j)
         end
     end
     L
@@ -130,7 +128,7 @@ function LinearAlgebra.cholesky(::Type{PureHemi{T}}, A::SparseMatrixCSC; tol=def
             # For a singular column the rank-1 update to future columns is zero
             # (factor 2*d[j] = 0), so we do NOT add j to row_preds[i].
             # However, the off-diagonal entries are still needed by forward/backward
-            # substitution: unsafe_getindex returns PureHemi(0, L[i,j]) for d[j]=0, i>j.
+            # substitution: _getL returns PureHemi(0, L[i,j]) for d[j]=0, i>j.
             for i in w_nnz
                 i <= j && continue
                 vi = w[i]
@@ -198,19 +196,29 @@ function nullsolver(F::SparseHemiCholeskyReal; tol=default_tol(F))
     HemiCholeskyXY{eltype(F.L), typeof(F), typeof(HF)}(F, X, Y, HF, Q, nullflag)
 end
 
+function LinearAlgebra.AbstractMatrix(F::SparseHemiCholeskyReal{T}) where T
+    L_h = hrmatrix(T, F)
+    return L_h * L_h'
+end
+
+function LinearAlgebra.ldiv!(F::SparseHemiCholeskyReal{T}, b::AbstractVector; forcenull::Bool=false) where T
+    K = length(b)
+    size(F, 1) == K || throw(DimensionMismatch("rhs must have length $K consistent with matrix size $(size(F,1))"))
+    nnull = nzerodiags(F)
+    nnull != 0 && !forcenull && error("There were zero diagonals; use `nullsolver(F)\\b` or pass `forcenull=true`.")
+    ytilde = Vector{PureHemi{T}}(undef, K)
+    forwardsubst!(ytilde, F, b)
+    xtilde = Vector{T}(undef, K)
+    htilde = Vector{T}(undef, nnull)
+    backwardsubst!(xtilde, htilde, F, ytilde)
+    copyto!(b, xtilde)
+    return b
+end
+
 function Base.:(\)(F::SparseHemiCholeskyReal{T}, b::AbstractVector; forcenull::Bool=false) where T<:Real
     K = length(b)
     size(F, 1) == K || throw(DimensionMismatch("rhs length $K does not match matrix size $(size(F,1))"))
-    nnull = nzerodiags(F)
-    if nnull != 0 && !forcenull
-        error("There were zero diagonals; use `nullsolver(F)\\b` or pass `forcenull=true`.")
-    end
-    ytilde = Array{PureHemi{T}}(undef, K)
-    forwardsubst!(ytilde, F, b)
-    xtilde = Array{T}(undef, K)
-    htilde = Array{T}(undef, nnull)
-    backwardsubst!(xtilde, htilde, F, ytilde)
-    xtilde
+    return ldiv!(F, Vector{T}(b); forcenull=forcenull)
 end
 
 @inline function mark!(w, w_flag, w_nnz, i, v)

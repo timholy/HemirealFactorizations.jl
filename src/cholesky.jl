@@ -1,28 +1,113 @@
-import Base: *, \, unsafe_getindex
+import Base: *, \
 using LinearAlgebra.BLAS: syr!, ger!, syrk!, syr2k!
-using LinearAlgebra: BlasFloat, AdjointFactorization, TransposeFactorization
-
-export nullsolver
+using LinearAlgebra: BlasFloat
 
 ### Types, conversions, and basic utilities
 
+"""
+    AbstractHemiCholesky{T<:Real} <: Factorization{PureHemi{T}}
+
+Abstract supertype for Cholesky factorizations of real symmetric matrices over the hemireal
+numbers. A hemireal Cholesky factorization of a real symmetric matrix `A` produces a
+lower-triangular factor `L` with entries in [`PureHemi`](@ref) numbers such that `A = L * L'`.
+
+Unlike the standard Cholesky factorization, hemireal Cholesky factorizations exist for *all*
+real symmetric matrices: positive-definite, positive-semidefinite, indefinite, and singular.
+
+Subtypes: [`HemiCholesky`](@ref), [`HemiCholeskyReal`](@ref), [`HemiCholeskyPivot`](@ref),
+[`HemiCholeskyXY`](@ref).
+
+See also [`cholesky`](@ref), [`cholesky!`](@ref), [`nullsolver`](@ref).
+"""
 abstract type AbstractHemiCholesky{T} <: Factorization{PureHemi{T}} end
 
-struct HemiCholesky{T<:Real} <: AbstractHemiCholesky{T}
-    L::Matrix{PureHemi{T}}
+"""
+    HemiCholesky{T<:Real, S<:AbstractMatrix{PureHemi{T}}} <: AbstractHemiCholesky{T}
+
+Matrix factorization type for the hemireal Cholesky factorization of a real symmetric matrix,
+with the lower-triangular [`PureHemi`](@ref) factor stored directly as a matrix. This type is
+rarely constructed directly; [`HemiCholeskyReal`](@ref) is the standard result type for real
+inputs.
+
+The lower-triangular factor is accessible as `F.L`. The original matrix is recovered by
+`Matrix(F)`, satisfying `Matrix(F) ≈ A`.
+
+Iterating the decomposition produces the components `L` and `U = L'`.
+
+The following functions are available for `HemiCholesky` objects:
+[`size`](@ref), [`\\`](@ref), [`Matrix`](@ref), [`det`](@ref), [`logdet`](@ref),
+[`logabsdet`](@ref), [`isposdef`](@ref), [`issuccess`](@ref).
+"""
+struct HemiCholesky{T<:Real, S<:AbstractMatrix{PureHemi{T}}} <: AbstractHemiCholesky{T}
+    L::S
 end
 
 # Pure-hemi encoded as real (stores the nu-component in lower-triangle of L)
-struct HemiCholeskyReal{T<:Real} <: AbstractHemiCholesky{T}
-    L::Matrix{T}
+"""
+    HemiCholeskyReal{T<:Real, S<:AbstractMatrix{T}} <: AbstractHemiCholesky{T}
+
+Matrix factorization type for the hemireal Cholesky factorization of a real symmetric matrix
+`A`, using a compact real-number encoding of the lower-triangular [`PureHemi`](@ref) factor.
+This is the return type of [`cholesky`](@ref) and [`cholesky!`](@ref) for real input matrices.
+
+The factorization computes a lower-triangular hemireal matrix `L_h` satisfying `A = L_h * L_h'`.
+The ν-components of `L_h` are stored in the real matrix `F.L`, and the sign of each diagonal
+entry is stored as `Int8` in `F.d` (values in `{-1, 0, 1}`). The `(i,j)` entry of `L_h` for
+`i ≥ j` is `PureHemi(F.d[j]*F.L[i,j], F.L[i,j])`.
+
+A zero in `F.d` indicates a singular direction. The original matrix is recovered by
+`Matrix(F)`, satisfying `Matrix(F) ≈ A`.
+
+The lower-triangular factor is also accessible as `F.U = F.L'` (the upper-triangular factor).
+Iterating the decomposition produces the components `L` and `U` in order.
+
+The following functions are available for `HemiCholeskyReal` objects:
+[`size`](@ref), [`\\`](@ref), [`ldiv!`](@ref), [`rdiv!`](@ref), [`Matrix`](@ref),
+[`det`](@ref), [`logdet`](@ref), [`logabsdet`](@ref), [`isposdef`](@ref),
+[`issuccess`](@ref), [`rank`](@ref), [`nullsolver`](@ref).
+"""
+struct HemiCholeskyReal{T<:Real, S<:AbstractMatrix{T}} <: AbstractHemiCholesky{T}
+    L::S
     d::Vector{Int8}  # diagonal sign (-1, 0, or 1)
 end
 
-struct HemiCholeskyPivot{T<:Real} <: AbstractHemiCholesky{T}
-    L::HemiCholeskyReal{T}
+"""
+    HemiCholeskyPivot{T<:Real, S<:AbstractMatrix{T}} <: AbstractHemiCholesky{T}
+
+Matrix factorization type for the pivoted hemireal Cholesky factorization of a real symmetric
+matrix `A`. This is the return type of `cholesky(PureHemi, A, RowMaximum())`.
+
+Diagonal pivoting reorders rows and columns to improve numerical stability. The inner
+(unpivoted) factorization is stored in `F.L` as a [`HemiCholeskyReal`](@ref). The permutation
+is accessible as `F.p` (vector) or `F.P` (matrix), with `F.piv` available for internal use.
+
+The relationships satisfied are:
+- `Matrix(F.L) ≈ A[F.p, F.p]` (unpivoted factor reconstructs the permuted matrix)
+- `Matrix(F) ≈ A` (full reconstruction accounts for the permutation)
+
+The upper-triangular factor is accessible as `F.U = F.L'`. Iteration is not supported
+(consistent with `CholeskyPivoted` in `LinearAlgebra`).
+
+The following functions are available for `HemiCholeskyPivot` objects:
+[`size`](@ref), [`\\`](@ref), [`ldiv!`](@ref), [`rdiv!`](@ref), [`Matrix`](@ref),
+[`det`](@ref), [`logdet`](@ref), [`logabsdet`](@ref), [`isposdef`](@ref),
+[`issuccess`](@ref), [`rank`](@ref), [`nullsolver`](@ref).
+"""
+struct HemiCholeskyPivot{T<:Real, S<:AbstractMatrix{T}} <: AbstractHemiCholesky{T}
+    L::HemiCholeskyReal{T, S}
     piv::Vector{Int}
 end
 
+"""
+    HemiCholeskyXY{T<:Real, Ltype<:AbstractHemiCholesky, Htype} <: AbstractHemiCholesky{T}
+
+Extended hemireal Cholesky factorization that augments a [`HemiCholeskyReal`](@ref) or
+[`HemiCholeskyPivot`](@ref) with null-space information, enabling stable least-squares solving
+for singular matrices. Obtained from [`nullsolver`](@ref).
+
+When `F::HemiCholeskyXY`, `F \\ b` returns the minimum-norm least-squares solution. The
+numerical rank is `rank(F)`.
+"""
 struct HemiCholeskyXY{T<:Real,Ltype<:AbstractHemiCholesky,Htype} <: AbstractHemiCholesky{T}
     L::Ltype
     X::Matrix{T}
@@ -33,62 +118,105 @@ struct HemiCholeskyXY{T<:Real,Ltype<:AbstractHemiCholesky,Htype} <: AbstractHemi
 end
 HemiCholeskyXY(L::HemiCholeskyReal) = nullsolver(L)
 
-const TransposedAbstractHemiCholesky{T} = Union{AdjointFactorization{PureHemi{T}, <:AbstractHemiCholesky{T}}, TransposeFactorization{PureHemi{T}, <:AbstractHemiCholesky{T}}}
+"""
+    nullsolver(F::Union{HemiCholeskyReal, HemiCholeskyPivot, SparseHemiCholeskyReal}; tol) -> HemiCholeskyXY
 
+Augment a hemireal Cholesky factorization `F` with null-space information, returning a
+[`HemiCholeskyXY`](@ref) that can solve singular systems stably via `\\`. The result `Fs`
+satisfies `Fs \\ b ≈ svd(A) \\ b` (minimum-norm least-squares solution).
+
+The `tol` keyword controls the threshold for identifying null directions (default: a multiple
+of machine epsilon scaled by the factor norm).
+"""
 function nullsolver(L::Union{HemiCholeskyReal,HemiCholeskyPivot}; tol=default_tol(L))
     X, Y, HF, Q, nullflag = solve_singularities(L; tol=tol)
     HemiCholeskyXY{eltype(X), typeof(L), typeof(HF)}(L, X, Y, HF, Q, nullflag)
 end
 
-for FT in (HemiCholesky, HemiCholeskyReal, HemiCholeskyPivot, HemiCholeskyXY)
-    @eval begin
-        Base.size(F::$FT) = size(F.L)
-        Base.size(F::$FT, d::Integer) = size(F.L, d)
-        Base.eltype(::Type{$FT{T}}) where T = PureHemi{T}
+Base.size(F::AbstractHemiCholesky) = size(F.L)
+Base.size(F::AbstractHemiCholesky, d::Integer) = size(F.L, d)
+Base.eltype(::Type{<:AbstractHemiCholesky{T}}) where T = PureHemi{T}
+
+LinearAlgebra.issuccess(::AbstractHemiCholesky) = true
+LinearAlgebra.isposdef(F::HemiCholeskyReal) = all(==(Int8(1)), F.d)
+LinearAlgebra.isposdef(F::HemiCholeskyPivot) = isposdef(F.L)
+LinearAlgebra.isposdef(F::HemiCholesky) = all(x -> x.m > 0 && x.n > 0, diag(F.L))
+
+Base.copy(F::HemiCholesky) = HemiCholesky(copy(F.L))
+Base.copy(F::HemiCholeskyReal) = HemiCholeskyReal(copy(F.L), copy(F.d))
+Base.copy(F::HemiCholeskyPivot) = HemiCholeskyPivot(copy(F.L), copy(F.piv))
+
+Base.:(==)(F1::HemiCholesky, F2::HemiCholesky) = F1.L == F2.L
+Base.:(==)(F1::HemiCholeskyReal, F2::HemiCholeskyReal) = F1.L == F2.L && F1.d == F2.d
+Base.:(==)(F1::HemiCholeskyPivot, F2::HemiCholeskyPivot) = F1.L == F2.L && F1.piv == F2.piv
+
+function Base.getproperty(F::HemiCholesky, d::Symbol)
+    d === :U && return F.L'
+    return getfield(F, d)
+end
+
+Base.propertynames(F::HemiCholesky, private::Bool=false) =
+    (:L, :U, (private ? fieldnames(typeof(F)) : ())...)
+
+function Base.getproperty(F::HemiCholeskyReal{T}, d::Symbol) where T
+    d === :U && return hrmatrix(T, F)'
+    return getfield(F, d)
+end
+
+Base.propertynames(F::HemiCholeskyReal, private::Bool=false) =
+    (:L, :U, :d, (private ? fieldnames(typeof(F)) : ())...)
+
+Base.propertynames(F::HemiCholeskyXY, private::Bool=false) =
+    (:L, (private ? fieldnames(typeof(F)) : ())...)
+
+function Base.getproperty(F::HemiCholeskyPivot{T}, d::Symbol) where T
+    if d === :p
+        return getfield(F, :piv)
+    elseif d === :P
+        n = size(F, 1)
+        P = zeros(T, n, n)
+        for i in 1:n
+            P[getfield(F, :piv)[i], i] = one(T)
+        end
+        return P
+    elseif d === :U
+        return hrmatrix(T, F.L)'
+    else
+        return getfield(F, d)
     end
 end
+
+Base.propertynames(F::HemiCholeskyPivot, private::Bool=false) =
+    (:L, :U, :p, :P, (private ? (:piv,) : ())...)
+
 # Base.eltype(::Type{HemiCholeskyXY{T,Ltype}}) where {T,Ltype} = PureHemi{T}
 
-Base.getindex(F::HemiCholesky, i::Integer, j::Integer) = F.L[i,j]
-
-function unsafe_getindex(F::HemiCholeskyReal{T}, i::Integer, j::Integer) where T
+function _getL(F::HemiCholeskyReal{T}, i::Integer, j::Integer) where T
     d = F.d[j]
     nu = F.L[i,j]
     ifelse(d == 0 && i==j, PureHemi{T}(1,0), PureHemi{T}(d*nu, nu))
 end
-function Base.getindex(F::HemiCholeskyReal{T}, i::Integer, j::Integer) where T
-    ifelse(i >= j, Base.unsafe_getindex(F, i, j), PureHemi{T}(0, 0))
+
+function _getL(F::HemiCholesky{T}, i::Integer, j::Integer) where T
+    i >= j ? F.L[i,j] : zero(PureHemi{T})
 end
 
 hrmatrix(::Type{T}, F::HemiCholesky) where T = convert(Matrix{PureHemi{T}}, F.L)
 function hrmatrix(::Type{T}, F::HemiCholeskyReal) where T
-    L = Array{PureHemi{T}}(undef, size(F))
+    L = Matrix{PureHemi{T}}(undef, size(F))
     K = size(F, 1)
     for j = 1:K
         for i = 1:j-1
             L[i,j] = zero(PureHemi{T})
         end
         for i = j:K
-            L[i,j] = F[i,j]
+            L[i,j] = _getL(F, i, j)
         end
     end
     L
 end
 hrmatrix(::Type{T}, F::HemiCholeskyPivot) where T = hrmatrix(T, F.L)
 hrmatrix(::Type{T}, F::HemiCholeskyXY) where T = hrmatrix(T, F.L)
-
-hrmatrixpiv(::Type{T}, F::HemiCholesky) where T      = hrmatrix(T, F)
-hrmatrixpiv(::Type{T}, F::HemiCholeskyReal) where T  = hrmatrix(T, F)
-hrmatrixpiv(::Type{T}, F::HemiCholeskyPivot) where T = hrmatrix(T, F)[invperm(F.piv),:]
-hrmatrixpiv(::Type{T}, F::HemiCholeskyXY) where T    = hrmatrixpiv(T, F.L)
-
-Base.convert(::Type{HemiCholesky{T}}, F::HemiCholesky) where T = hrmatrix(T, F)
-Base.convert(::Type{HemiCholesky{T}}, F::HemiCholeskyReal) where T = hrmatrix(T, F)
-Base.convert(::Type{HemiCholesky{T}}, F::HemiCholeskyXY) where T = convert(HemiCholesky{T}, F.L)
-Base.convert(::Type{HemiCholesky}, F::AbstractHemiCholesky{T}) where T = convert(HemiCholesky{T}, F)
-
-Base.convert(::Type{Matrix}, F::AbstractHemiCholesky{T}) where T = hrmatrixpiv(T, F)
-Base.convert(::Type{Matrix{T}}, F::AbstractHemiCholesky) where T = hrmatrixpiv(T, F)
 
 function Base.show(io::IO, ::MIME"text/plain", F::AbstractHemiCholesky)
     println(io, Base.dims2string(size(F)), " ", typeof(F), ':')
@@ -97,19 +225,40 @@ end
 _show(io::IO, F::AbstractHemiCholesky{T}) where T = Base.print_matrix(IOContext(io, :limit => true), hrmatrix(T, F))
 function _show(io::IO, F::HemiCholeskyPivot{T}) where T
     Base.print_matrix(IOContext(io, :limit => true), hrmatrix(T, F))
-    println(io, "\n  pivot: ", F.piv)
+    println(io, "\n  permutation: ", F.piv)
 end
 _show(io::IO, F::HemiCholeskyXY{T}) where T = _show(io, F.L)
 
-function (*)(F1::AbstractHemiCholesky, F2::TransposedAbstractHemiCholesky)
-    L1 = convert(Matrix, F1)
-    F2 = parent(F2)
-    if F1 === F2
-        return L1*L1'
-    end
-    L2 = convert(Matrix, F2)
-    return L1*L2'
+LinearAlgebra.adjoint(F::AbstractHemiCholesky) = F
+
+# Iteration for destructuring: L, U = cholesky(PureHemi, A)
+# Not supported for HemiCholeskyPivot (consistent with CholeskyPivoted in LinearAlgebra).
+Base.iterate(F::HemiCholesky) = (F.L, Val(:U))
+Base.iterate(F::HemiCholesky, ::Val{:U}) = (F.L', Val(:done))
+Base.iterate(F::HemiCholeskyReal{T}) where T = (hrmatrix(T, F), Val(:U))
+Base.iterate(F::HemiCholeskyReal{T}, ::Val{:U}) where T = (hrmatrix(T, F)', Val(:done))
+Base.iterate(::AbstractHemiCholesky, ::Val{:done}) = nothing
+
+function LinearAlgebra.AbstractMatrix(F::HemiCholeskyReal{T}) where T
+    L_h = hrmatrix(T, F)
+    return L_h * L_h'
 end
+
+function LinearAlgebra.AbstractMatrix(F::HemiCholesky{T}) where T
+    return F.L * F.L'
+end
+
+function LinearAlgebra.AbstractMatrix(F::HemiCholeskyPivot{T}) where T
+    M = AbstractMatrix(F.L)
+    ip = invperm(F.piv)
+    return M[ip, ip]
+end
+
+LinearAlgebra.AbstractMatrix(F::HemiCholeskyXY) = AbstractMatrix(F.L)
+
+LinearAlgebra.AbstractArray(F::AbstractHemiCholesky) = AbstractMatrix(F)
+Base.Matrix(F::AbstractHemiCholesky) = convert(Array, AbstractMatrix(F))
+Base.Array(F::AbstractHemiCholesky) = Matrix(F)
 
 # Base.full(F::AbstractHemiCholesky) = F*F'
 
@@ -124,16 +273,48 @@ end
 
 ### Computing the factorization of a matrix
 
-function LinearAlgebra.cholesky(::Type{PureHemi{T}}, A::AbstractMatrix, pivot=Val{false}; tol=default_tol(A), blocksize=default_blocksize(T)) where T
+"""
+    cholesky(PureHemi{T}, A, pivot=NoPivot(); tol, blocksize) -> HemiCholeskyReal or HemiCholeskyPivot
+    cholesky(PureHemi,    A, pivot=NoPivot(); tol, blocksize)
+
+Compute the hemireal Cholesky factorization of the real symmetric matrix `A` and return a
+[`HemiCholeskyReal`](@ref) (unpivoted) or [`HemiCholeskyPivot`](@ref) (pivoted) factorization
+`F` satisfying `Matrix(F) ≈ A`.
+
+Unlike the standard [`cholesky`](@ref LinearAlgebra.cholesky), hemireal Cholesky factorizations
+exist for *all* real symmetric matrices, including indefinite and singular ones.
+
+The type parameter `T` controls the working precision; use `PureHemi{T}` to fix it or `PureHemi`
+to infer it from `eltype(A)`.
+
+With `pivot = RowMaximum()`, diagonal pivoting is applied (maximizing the diagonal pivot at each
+step) and the result is a [`HemiCholeskyPivot`](@ref) with the permutation accessible via `F.p`.
+
+## Keyword arguments
+- `tol`: diagonal entries (after partial elimination) with absolute value `≤ tol` are treated as
+  zero (singular). Defaults to a scale-adaptive multiple of machine epsilon.
+- `blocksize`: block size for the cache-efficient blocked algorithm (dense matrices only).
+
+See also [`cholesky!`](@ref), [`HemiCholeskyReal`](@ref), [`HemiCholeskyPivot`](@ref),
+[`nullsolver`](@ref).
+"""
+function LinearAlgebra.cholesky(::Type{PureHemi{T}}, A::AbstractMatrix, pivot::Union{NoPivot,RowMaximum}=NoPivot(); tol=default_tol(A), blocksize=default_blocksize(T)) where T
     size(A, 1) == size(A, 2) || throw(DimensionMismatch("A must be square"))
     A0 = Array{floattype(T)}(undef, size(A))
     copy!(A0, A)
     cholesky!(PureHemi{T}, A0, pivot; tol=tol, blocksize=blocksize)
 end
-LinearAlgebra.cholesky(::Type{PureHemi}, A::AbstractMatrix, pivot=Val{false}; tol=default_tol(A), blocksize=default_blocksize(floattype(eltype(A)))) = cholesky(PureHemi{floattype(eltype(A))}, A, pivot; tol=tol, blocksize=blocksize)
+LinearAlgebra.cholesky(::Type{PureHemi}, A::AbstractMatrix, pivot::Union{NoPivot,RowMaximum}=NoPivot(); tol=default_tol(A), blocksize=default_blocksize(floattype(eltype(A)))) = cholesky(PureHemi{floattype(eltype(A))}, A, pivot; tol=tol, blocksize=blocksize)
 
+"""
+    cholesky!(PureHemi{T}, A, pivot=NoPivot(); tol, blocksize) -> HemiCholeskyReal or HemiCholeskyPivot
+    cholesky!(PureHemi,    A, pivot=NoPivot(); tol, blocksize)
+
+The same as [`cholesky`](@ref), but overwrites the input matrix `A` with the lower-triangular
+factor rather than allocating a copy.
+"""
 # Blocked, cache-friendly algorithm
-function LinearAlgebra.cholesky!(::Type{PureHemi{T}}, A::AbstractMatrix{T}, pivot::Type{Val{false}}=Val{false}; tol=default_tol(A), blocksize=default_blocksize(T)) where T
+function LinearAlgebra.cholesky!(::Type{PureHemi{T}}, A::AbstractMatrix{T}, ::NoPivot=NoPivot(); tol=default_tol(A), blocksize=default_blocksize(T)) where T
     size(A,1) == size(A,2) || error("A must be square")
     eltype(A)<:Real || error("element type $(eltype(A)) not yet supported")
     K = size(A, 1)
@@ -162,7 +343,7 @@ function LinearAlgebra.cholesky!(::Type{PureHemi{T}}, A::AbstractMatrix{T}, pivo
 end
 
 # Version with pivoting
-function LinearAlgebra.cholesky!(::Type{PureHemi{T}}, A::AbstractMatrix{T}, pivot::Type{Val{true}}; tol=default_tol(A), blocksize=default_blocksize(T)) where T<:AbstractFloat
+function LinearAlgebra.cholesky!(::Type{PureHemi{T}}, A::AbstractMatrix{T}, ::RowMaximum; tol=default_tol(A), blocksize=default_blocksize(T)) where T<:AbstractFloat
     size(A,1) == size(A,2) || error("A must be square")
     eltype(A)<:Real || error("element type $(eltype(A)) not yet supported")
     K = size(A, 1)
@@ -183,8 +364,8 @@ function LinearAlgebra.cholesky!(::Type{PureHemi{T}}, A::AbstractMatrix{T}, pivo
 end
 
 
-LinearAlgebra.cholesky!(::Type{PureHemi}, A::AbstractMatrix{T}, pivot=Val{false}; tol=default_tol(A), blocksize=default_blocksize(T)) where {T<:AbstractFloat} =
-    cholesky!(PureHemi{T}, A; tol=tol, blocksize=blocksize)
+LinearAlgebra.cholesky!(::Type{PureHemi}, A::AbstractMatrix{T}, pivot::Union{NoPivot,RowMaximum}=NoPivot(); tol=default_tol(A), blocksize=default_blocksize(T)) where {T<:AbstractFloat} =
+    cholesky!(PureHemi{T}, A, pivot; tol=tol, blocksize=blocksize)
 
 
 function solve_diagonal!(B, d, tol)
@@ -337,7 +518,7 @@ end
 # Computes dest -= C*diagm(d)*C', in the lower diagonal
 function update_columns!(dest, d::AbstractVector, C::AbstractMatrix)
     Ct = C'
-    Cdt = scale(2*d, Ct)
+    Cdt = (2 .* d) .* Ct
     K = size(dest, 1)
     nc = size(C, 2)
     for j = 1:K
@@ -380,20 +561,68 @@ function solve_singularities(L; tol=default_tol(L))
 end
 solve_singularities(L::HemiCholeskyPivot; tol=default_tol(L)) = solve_singularities(L.L; tol=tol)
 
+function LinearAlgebra.ldiv!(F::HemiCholeskyReal{T}, b::AbstractVector; forcenull::Bool=false) where T
+    K = length(b)
+    size(F, 1) == K || throw(DimensionMismatch("rhs must have length $K consistent with matrix size $(size(F,1))"))
+    nnull = nzerodiags(F)
+    nnull != 0 && !forcenull && error("There were zero diagonals; use `nullsolver(F)\\b` or, if you're sure all zeros correspond to null directions, `(\\)(F, b, forcenull=true)`.")
+    ytilde = Vector{PureHemi{T}}(undef, K)
+    forwardsubst!(ytilde, F, b)
+    htilde = Vector{T}(undef, nnull)
+    backwardsubst!(b, htilde, F, ytilde)
+    return b
+end
+
+function LinearAlgebra.ldiv!(F::HemiCholeskyPivot{T}, b::AbstractVector; forcenull::Bool=false) where T
+    size(F, 1) == length(b) || throw(DimensionMismatch("rhs must have length $(length(b)) consistent with matrix size $(size(F,1))"))
+    permute!(b, F.piv)
+    ldiv!(F.L, b; forcenull=forcenull)
+    invpermute!(b, F.piv)
+    return b
+end
+
+function LinearAlgebra.rdiv!(B::AbstractMatrix, F::HemiCholeskyReal{T}; forcenull::Bool=false) where T
+    m, n = size(B)
+    size(F, 1) == n || throw(DimensionMismatch("matrix second dimension $n incompatible with factorization size $(size(F,1))"))
+    b = Vector{T}(undef, n)
+    for i in 1:m
+        copyto!(b, view(B, i, :))
+        ldiv!(F, b; forcenull=forcenull)
+        copyto!(view(B, i, :), b)
+    end
+    return B
+end
+
+function LinearAlgebra.rdiv!(B::AbstractMatrix, F::HemiCholeskyPivot{T}; forcenull::Bool=false) where T
+    m, n = size(B)
+    size(F, 1) == n || throw(DimensionMismatch("matrix second dimension $n incompatible with factorization size $(size(F,1))"))
+    b = Vector{T}(undef, n)
+    for i in 1:m
+        copyto!(b, view(B, i, :))
+        ldiv!(F, b; forcenull=forcenull)
+        copyto!(view(B, i, :), b)
+    end
+    return B
+end
+
 function (\)(L::Union{HemiCholesky{T},HemiCholeskyReal{T},HemiCholeskyPivot{T}}, b::AbstractVector; forcenull::Bool=false) where T<:Real
     K = length(b)
     size(L,1) == K || throw(DimensionMismatch("rhs must have a length ($(length(b))) consistent with the size $(size(L)) of the matrix"))
-    bp, Lp = pivot(L, b)
-    nnull = nzerodiags(Lp)
-    if nnull != 0 && !forcenull
-        error("There were zero diagonals; use `nullsolver(L)\\b` or, if you're sure all zeros correspond to null directions, (\\)(L, b, forcenull=true)`.")
+    if L isa HemiCholesky
+        bp, Lp = pivot(L, b)
+        nnull = nzerodiags(Lp)
+        if nnull != 0 && !forcenull
+            error("There were zero diagonals; use `nullsolver(L)\\b` or, if you're sure all zeros correspond to null directions, (\\)(L, b, forcenull=true)`.")
+        end
+        ytilde = Array{PureHemi{T}}(undef, K)
+        forwardsubst!(ytilde, Lp, bp)
+        xtilde = Array{T}(undef, K)
+        htilde = Array{T}(undef, nnull)
+        backwardsubst!(xtilde, htilde, Lp, ytilde)
+        return ipivot(L, xtilde)
+    else
+        return ldiv!(L, Vector{T}(b); forcenull=forcenull)
     end
-    ytilde = Array{PureHemi{T}}(undef, K)
-    forwardsubst!(ytilde, Lp, bp)
-    xtilde = Array{T}(undef, K)
-    htilde = Array{T}(undef, nnull)
-    backwardsubst!(xtilde, htilde, Lp, ytilde)
-    ipivot(L, xtilde)
 end
 
 function (\)(F::HemiCholeskyXY{T}, b::AbstractVector) where T
@@ -439,12 +668,12 @@ function forwardsubst!(Y, L::AbstractHemiCholesky)
             gα[jj] = 0
         end
         for j = 1:i-1
-            Lij = unsafe_getindex(L, i, j)
+            Lij = _getL(L, i, j)
             for jj = 1:si
                 gα[jj] -= Lij*Y[j,jj]
             end
         end
-        Lii = unsafe_getindex(L, i, i)
+        Lii = _getL(L, i, i)
         if issingular(Lii)
             for jj = 1:si
                 Y[i,jj] = PureHemi{T}(0, gα[jj]/Lii.m)
@@ -468,10 +697,10 @@ function forwardsubst!(ytilde::AbstractVector, L::AbstractHemiCholesky, b::Abstr
     for i = 1:K
         g = b[i]
         for j = 1:i-1
-            Lij = unsafe_getindex(L, i, j)
+            Lij = _getL(L, i, j)
             g -= Lij*ytilde[j]
         end
-        Lii = unsafe_getindex(L, i, i)
+        Lii = _getL(L, i, i)
         if issingular(Lii)
             ytilde[i] = PureHemi{T}(0, g/Lii.m)
         else
@@ -492,12 +721,12 @@ function backwardsubst!(X, H, L::AbstractHemiCholesky, Y)
             h[jj] = Y[i,jj]
         end
         for j = i+1:K
-            Lji = unsafe_getindex(L, j, i)
+            Lji = _getL(L, j, i)
             for jj = 1:nc
                 h[jj] -= Lji*X[j,jj]
             end
         end
-        Lii = unsafe_getindex(L, i, i)
+        Lii = _getL(L, i, i)
         if issingular(Lii)
             for jj = 1:nc
                 hjj = h[jj]
@@ -541,7 +770,7 @@ issingular(x::PureHemi) = x.n == 0
 function nzerodiags(L::HemiCholesky)
     ns = 0
     for i = 1:size(L,1)
-        ns += issingular(L[i,i])
+        ns += issingular(L.L[i,i])
     end
     ns
 end
@@ -558,13 +787,13 @@ nzerodiags(L::HemiCholeskyXY) = size(L.X, 2)
 function singular_diagonals(L)
     indxsing = Int[]
     for i = 1:size(L,1)
-        if issingular(L[i,i])
+        if issingular(L.L[i,i])
             push!(indxsing, i)
         end
     end
     indxsing
 end
-singular_diagonals(L::HemiCholeskyReal) = find(L.d .== 0)
+singular_diagonals(L::HemiCholeskyReal) = findall(==(0), L.d)
 
 floattype(::Type{T}) where {T<:AbstractFloat} = T
 floattype(::Type{T}) where {T<:Integer} = Float64
@@ -587,3 +816,30 @@ function default_tol(L::HemiCholeskyReal)
 end
 default_tol(L::HemiCholeskyPivot) = default_tol(L.L)
 default_blocksize(::Type{T}) where {T} = max(4, floor(Int, sqrt(cachesize/sizeof(T)/4)))
+
+### Determinant
+
+function LinearAlgebra.logabsdet(F::HemiCholeskyReal{T}) where T
+    d = F.d
+    n = size(F, 1)
+    any(==(Int8(0)), d) && return (T(-Inf), one(T))
+    sign_det = T(prod(Int.(d)))
+    logabs = n * log(2*one(T)) + 2 * sum(log(F.L[j,j]) for j in 1:n)
+    return (logabs, sign_det)
+end
+
+LinearAlgebra.logabsdet(F::HemiCholeskyPivot) = logabsdet(F.L)
+LinearAlgebra.logabsdet(F::HemiCholeskyXY) = logabsdet(F.L)
+
+function LinearAlgebra.logdet(F::HemiCholeskyReal)
+    logabs, sign = logabsdet(F)
+    sign > 0 || throw(DomainError(F, "logdet requires a positive-definite matrix"))
+    return logabs
+end
+LinearAlgebra.logdet(F::Union{HemiCholeskyPivot, HemiCholeskyXY}) = logdet(F.L)
+
+function LinearAlgebra.det(F::AbstractHemiCholesky)
+    logabs, sign = logabsdet(F)
+    isinf(logabs) && return zero(real(eltype(F)))
+    return sign * exp(logabs)
+end
