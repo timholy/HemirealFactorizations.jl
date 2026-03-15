@@ -65,38 +65,49 @@ for p in (NoPivot(), RowMaximum())
     @test Matrix(F) ≈ A
 end
 
-# ── Dense-only: new API features ──────────────────────────────────────────────
+# ── New API features: dense and sparse ────────────────────────────────────────
 
-# issuccess: always true regardless of definiteness
-@test issuccess(cholesky(PureHemi, [2.0 1; 1 3]))
-@test issuccess(cholesky(PureHemi, [-1.0 0; 0 1]))   # indefinite
-@test issuccess(cholesky(PureHemi, [0.0 1; 1 0]))    # singular diagonal
+for (label, makeA) in [("dense", A -> A), ("sparse", A -> sparse(tril(A)))]
+
+    # issuccess: always true regardless of definiteness
+    @test issuccess(cholesky(PureHemi, makeA([2.0 1; 1 3])))
+    @test issuccess(cholesky(PureHemi, makeA([-1.0 0; 0 1])))   # indefinite
+    @test issuccess(cholesky(PureHemi, makeA([0.0 1; 1 0])))    # singular diagonal
+
+    # Iteration: L, U = F yields the lower- and upper-triangular PureHemi factors
+    let A = [2.0 1; 1 3]
+        F = cholesky(PureHemi, makeA(A))
+        L, U = F
+        @test L isa Matrix{<:PureHemi}
+        @test L * L' ≈ A
+        @test L * U ≈ A
+    end
+
+    # .U property and propertynames (:L, :U, :d)
+    let F = cholesky(PureHemi, makeA([2.0 1; 1 3]))
+        L, U = F
+        @test F.U == U
+        @test :L ∈ propertynames(F)
+        @test :U ∈ propertynames(F)
+        @test :d ∈ propertynames(F)
+    end
+
+    # rdiv!: (B / A) * A ≈ B
+    let A = (X = rand(4, 4); X'*X + 4I)
+        F = cholesky(PureHemi, makeA(A))
+        B = rand(3, 4)
+        R = rdiv!(copy(B), F)
+        @test R * A ≈ B
+    end
+
+end
+
+# ── New API features: dense only (pivoting) ───────────────────────────────────
+
+# issuccess for pivoted factorization
 @test issuccess(cholesky(PureHemi, [2.0 1; 1 3], RowMaximum()))
 
-# Iteration: destructure F to obtain the PureHemi lower-triangular factor L
-let A = [2.0 1; 1 3]
-    F = cholesky(PureHemi, A)
-    L, U = F
-    @test L isa Matrix{<:PureHemi}
-    @test L * L' ≈ A
-    @test L * U ≈ A
-end
-
-# .U property: upper-triangular factor (adjoint of L), available on all types
-let A = [2.0 1; 1 3]
-    F = cholesky(PureHemi, A)
-    L, U = F
-    @test F.U == U                     # .U matches second element of iteration
-    @test L * F.U ≈ A
-end
-let A = [2.0 2 1; 2 3 1; 1 1 2]
-    F = cholesky(PureHemi, A, RowMaximum())
-    L, U = F.L                         # unpack inner HemiCholeskyReal
-    @test F.U == U                     # HemiCholeskyPivot.U matches inner factor's U
-    @test L * F.U ≈ A[F.p, F.p]
-end
-
-# getproperty / propertynames for HemiCholeskyPivot
+# getproperty / propertynames for HemiCholeskyPivot (.L, .U, .p, .P)
 let A = [2.0 2 1; 2 3 1; 1 1 2]
     F = cholesky(PureHemi, A, RowMaximum())
     @test :L ∈ propertynames(F)
@@ -109,19 +120,14 @@ let A = [2.0 2 1; 2 3 1; 1 1 2]
     @test P' * P ≈ I                    # P is a permutation matrix
     @test P * P' ≈ I
     @test Matrix(F.L) ≈ A[F.p, F.p]    # inner factor reconstructs permuted A
+    L, U = F.L
+    @test F.U == U                      # .U matches the inner HemiCholeskyReal's U
+    @test L * F.U ≈ A[F.p, F.p]
 end
 
-# propertynames for HemiCholeskyReal
-let F = cholesky(PureHemi, [2.0 1; 1 3])
-    @test :L ∈ propertynames(F)
-    @test :U ∈ propertynames(F)
-    @test :d ∈ propertynames(F)
-end
-
-# rdiv!: rdiv!(copy(B), F) computes B / A, verified by (B / A) * A ≈ B
-for p in (NoPivot(), RowMaximum())
-    A = (X = rand(4, 4); X'*X + 4I)    # positive-definite, ensures full rank
-    F = cholesky(PureHemi, A, p)
+# rdiv! for HemiCholeskyPivot
+let A = (X = rand(4, 4); X'*X + 4I)
+    F = cholesky(PureHemi, A, RowMaximum())
     B = rand(3, 4)
     R = rdiv!(copy(B), F)
     @test R * A ≈ B
