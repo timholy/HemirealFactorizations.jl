@@ -29,6 +29,9 @@ end
 Base.propertynames(F::SparseHemiCholeskyReal, private::Bool=false) =
     (:L, :U, :d, (private ? fieldnames(typeof(F)) : ())...)
 
+Base.IteratorSize(::Type{<:SparseHemiCholeskyReal}) = Base.HasLength()
+Base.length(::SparseHemiCholeskyReal) = 2
+Base.IteratorEltype(::Type{<:SparseHemiCholeskyReal}) = Base.EltypeUnknown()
 Base.iterate(F::SparseHemiCholeskyReal{T}) where T = (hrmatrix(T, F), Val(:U))
 Base.iterate(F::SparseHemiCholeskyReal{T}, ::Val{:U}) where T = (hrmatrix(T, F)', Val(:done))
 
