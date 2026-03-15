@@ -116,7 +116,7 @@ struct HemiCholeskyXY{T<:Real,Ltype<:AbstractHemiCholesky,Htype} <: AbstractHemi
     Q::Matrix{T}
     nullflag::BitVector
 end
-HemiCholeskyXY(L::HemiCholeskyReal) = nullsolver(L)
+HemiCholeskyXY(L::HemiCholeskyReal; tol=default_tol(L)) = nullsolver(L; tol=tol)
 
 """
     nullsolver(F::Union{HemiCholeskyReal, HemiCholeskyPivot, SparseHemiCholeskyReal}; tol) -> HemiCholeskyXY
@@ -233,6 +233,11 @@ LinearAlgebra.adjoint(F::AbstractHemiCholesky) = F
 
 # Iteration for destructuring: L, U = cholesky(PureHemi, A)
 # Not supported for HemiCholeskyPivot (consistent with CholeskyPivoted in LinearAlgebra).
+Base.IteratorSize(::Type{<:HemiCholesky}) = Base.HasLength()
+Base.IteratorSize(::Type{<:HemiCholeskyReal}) = Base.HasLength()
+Base.length(::Union{HemiCholesky, HemiCholeskyReal}) = 2
+Base.IteratorEltype(::Type{<:HemiCholesky}) = Base.EltypeUnknown()
+Base.IteratorEltype(::Type{<:HemiCholeskyReal}) = Base.EltypeUnknown()
 Base.iterate(F::HemiCholesky) = (F.L, Val(:U))
 Base.iterate(F::HemiCholesky, ::Val{:U}) = (F.L', Val(:done))
 Base.iterate(F::HemiCholeskyReal{T}) where T = (hrmatrix(T, F), Val(:U))
@@ -374,7 +379,7 @@ function solve_diagonal!(B, d, tol)
         Bjj = B[j,j]
         if abs(Bjj) > tol
             # compute ℓ (as the jth column of B)
-            d[j] = sign(Bjj)
+            d[j] = Int8(sign(Bjj))
             s = sqrt(2*abs(Bjj))
             B[j,j] = s/2
             f = d[j]/s
@@ -420,7 +425,7 @@ function solve_columns_pivot!(A, d, piv, Ad, tol, jrange)
         end
         if abs(Ajj) > tol
             # compute ℓ (as the jth column of A)
-            d[j] = sign(Ajj)
+            d[j] = Int8(sign(Ajj))
             s = sqrt(2*abs(Ajj))
             A[j,j] = s/2
             f = d[j]/s

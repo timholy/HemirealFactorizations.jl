@@ -3,6 +3,7 @@ using LinearAlgebra
 using SparseArrays
 using Test
 using Combinatorics
+using DoubleFloats: Double64
 
 @testset "Hemireal Cholesky factorization" begin
 
@@ -65,38 +66,49 @@ for p in (NoPivot(), RowMaximum())
     @test Matrix(F) ≈ A
 end
 
-# ── Dense-only: new API features ──────────────────────────────────────────────
+# ── New API features: dense and sparse ────────────────────────────────────────
 
-# issuccess: always true regardless of definiteness
-@test issuccess(cholesky(PureHemi, [2.0 1; 1 3]))
-@test issuccess(cholesky(PureHemi, [-1.0 0; 0 1]))   # indefinite
-@test issuccess(cholesky(PureHemi, [0.0 1; 1 0]))    # singular diagonal
+for (label, makeA) in [("dense", A -> A), ("sparse", A -> sparse(tril(A)))]
+
+    # issuccess: always true regardless of definiteness
+    @test issuccess(cholesky(PureHemi, makeA([2.0 1; 1 3])))
+    @test issuccess(cholesky(PureHemi, makeA([-1.0 0; 0 1])))   # indefinite
+    @test issuccess(cholesky(PureHemi, makeA([0.0 1; 1 0])))    # singular diagonal
+
+    # Iteration: L, U = F yields the lower- and upper-triangular PureHemi factors
+    let A = [2.0 1; 1 3]
+        F = cholesky(PureHemi, makeA(A))
+        L, U = F
+        @test L isa Matrix{<:PureHemi}
+        @test L * L' ≈ A
+        @test L * U ≈ A
+    end
+
+    # .U property and propertynames (:L, :U, :d)
+    let F = cholesky(PureHemi, makeA([2.0 1; 1 3]))
+        L, U = F
+        @test F.U == U
+        @test :L ∈ propertynames(F)
+        @test :U ∈ propertynames(F)
+        @test :d ∈ propertynames(F)
+    end
+
+    # rdiv!: (B / A) * A ≈ B
+    let A = (X = rand(4, 4); X'*X + 4I)
+        F = cholesky(PureHemi, makeA(A))
+        B = rand(3, 4)
+        R = rdiv!(copy(B), F)
+        @test R * A ≈ B
+    end
+
+end
+
+# ── New API features: dense only (pivoting) ───────────────────────────────────
+
+# issuccess for pivoted factorization
 @test issuccess(cholesky(PureHemi, [2.0 1; 1 3], RowMaximum()))
 
-# Iteration: destructure F to obtain the PureHemi lower-triangular factor L
-let A = [2.0 1; 1 3]
-    F = cholesky(PureHemi, A)
-    L, U = F
-    @test L isa Matrix{<:PureHemi}
-    @test L * L' ≈ A
-    @test L * U ≈ A
-end
-
-# .U property: upper-triangular factor (adjoint of L), available on all types
-let A = [2.0 1; 1 3]
-    F = cholesky(PureHemi, A)
-    L, U = F
-    @test F.U == U                     # .U matches second element of iteration
-    @test L * F.U ≈ A
-end
-let A = [2.0 2 1; 2 3 1; 1 1 2]
-    F = cholesky(PureHemi, A, RowMaximum())
-    L, U = F.L                         # unpack inner HemiCholeskyReal
-    @test F.U == U                     # HemiCholeskyPivot.U matches inner factor's U
-    @test L * F.U ≈ A[F.p, F.p]
-end
-
-# getproperty / propertynames for HemiCholeskyPivot
+# getproperty / propertynames for HemiCholeskyPivot (.L, .U, .p, .P)
 let A = [2.0 2 1; 2 3 1; 1 1 2]
     F = cholesky(PureHemi, A, RowMaximum())
     @test :L ∈ propertynames(F)
@@ -109,22 +121,80 @@ let A = [2.0 2 1; 2 3 1; 1 1 2]
     @test P' * P ≈ I                    # P is a permutation matrix
     @test P * P' ≈ I
     @test Matrix(F.L) ≈ A[F.p, F.p]    # inner factor reconstructs permuted A
+    L, U = F.L
+    @test F.U == U                      # .U matches the inner HemiCholeskyReal's U
+    @test L * F.U ≈ A[F.p, F.p]
 end
 
-# propertynames for HemiCholeskyReal
-let F = cholesky(PureHemi, [2.0 1; 1 3])
-    @test :L ∈ propertynames(F)
-    @test :U ∈ propertynames(F)
-    @test :d ∈ propertynames(F)
-end
-
-# rdiv!: rdiv!(copy(B), F) computes B / A, verified by (B / A) * A ≈ B
-for p in (NoPivot(), RowMaximum())
-    A = (X = rand(4, 4); X'*X + 4I)    # positive-definite, ensures full rank
-    F = cholesky(PureHemi, A, p)
+# rdiv! for HemiCholeskyPivot
+let A = (X = rand(4, 4); X'*X + 4I)
+    F = cholesky(PureHemi, A, RowMaximum())
     B = rand(3, 4)
     R = rdiv!(copy(B), F)
     @test R * A ≈ B
+end
+
+# show for HemiCholeskyPivot (includes "permutation:" line)
+let A = [2.0 2 1; 2 3 1; 1 1 2]
+    F = cholesky(PureHemi, A, RowMaximum())
+    s = sprint(show, MIME("text/plain"), F)
+    @test occursin("permutation:", s)
+end
+
+# ── HemiCholesky type (direct PureHemi matrix storage) ────────────────────────
+
+# Positive-definite case: basic operations and backslash solve
+let A = [2.0 1; 1 2]
+    F_real = cholesky(PureHemi, A)
+    L, U = F_real               # L is a Matrix{PureHemi{Float64}}
+    F = HemiCholesky(L)
+
+    @test size(F) == (2, 2)
+    @test size(F, 1) == 2
+    @test issuccess(F)
+    @test isposdef(F)
+    @test Matrix(F) ≈ A
+
+    # Iteration
+    L2, U2 = F
+    @test L2 == L
+    @test U2 == L'
+
+    # Property access
+    @test F.U == L'
+    @test :L ∈ propertynames(F)
+    @test :U ∈ propertynames(F)
+
+    # copy and ==
+    G = copy(F)
+    @test G == F
+    @test G !== F
+
+    # show
+    s = sprint(show, MIME("text/plain"), F)
+    @test occursin("HemiCholesky", s)
+
+    # Backslash solve (exercises the HemiCholesky branch in \)
+    b = rand(2)
+    @test F \ b ≈ A \ b
+end
+
+# Singular case: isposdef false and \ throws without forcenull
+let A = [0.0 1; 1 0]
+    F_real = cholesky(PureHemi, A)
+    L, U = F_real
+    F = HemiCholesky(L)
+    @test !isposdef(F)
+    b = rand(2)
+    @test_throws ErrorException F \ b
+end
+
+# show for HemiCholeskyXY
+let A = (X = rand(3,5); X'*X)
+    F = cholesky(PureHemi, A, tol=1e-10)
+    Fs = nullsolver(F, tol=1e-10)
+    s = sprint(show, MIME("text/plain"), Fs)
+    @test occursin("HemiCholeskyReal", s)
 end
 
 # ── Correctness tests shared between dense and sparse ─────────────────────────
@@ -236,5 +306,156 @@ end
         @test cholesky(PureHemi, makeA(A)) != cholesky(PureHemi, makeA(A + I))
     end
 end # @testset "$label"
+
+# ── Misc uncovered one-liners ─────────────────────────────────────────────────
+
+# HemiCholeskyXY convenience constructor
+let A = (X = rand(3,5); X'*X)
+    F = cholesky(PureHemi, A, tol=1e-10)
+    Fs1 = nullsolver(F, tol=1e-10)
+    Fs2 = HemiCholeskyXY(F, tol=1e-10)   # convenience constructor with matching tol
+    @test rank(Fs1) == rank(Fs2)
+    @test Matrix(Fs1) ≈ Matrix(Fs2)
+end
+
+# isposdef, copy, == for HemiCholeskyPivot
+let A = (X = rand(4, 4); X'*X + I)
+    F = cholesky(PureHemi, A, RowMaximum())
+    @test isposdef(F)
+    G = copy(F)
+    @test G == F
+    @test G !== F
+    @test cholesky(PureHemi, A, RowMaximum()) != cholesky(PureHemi, A + I, RowMaximum())
+end
+
+# propertynames for HemiCholeskyXY
+let F = cholesky(PureHemi, [2.0 1; 1 2])
+    Fs = nullsolver(F)
+    @test :L ∈ propertynames(Fs)
+end
+
+# adjoint: F' === F
+let F = cholesky(PureHemi, [2.0 1; 1 2])
+    @test F' === F
+end
+
+# collect(F): exercises iterate(::AbstractHemiCholesky, ::Val{:done})
+let A = [2.0 1; 1 2]
+    F = cholesky(PureHemi, A)
+    Lc, Uc = collect(F)
+    @test Lc * Lc' ≈ A
+end
+
+# Array(F) and AbstractArray(F)
+let A = [2.0 1; 1 2]
+    F = cholesky(PureHemi, A)
+    @test Array(F) ≈ A
+end
+
+# Matrix(Fs) for HemiCholeskyXY: exercises AbstractMatrix(F::HemiCholeskyXY)
+let A = (X = rand(3,5); X'*X)
+    F = cholesky(PureHemi, A, tol=1e-10)
+    Fs = nullsolver(F, tol=1e-10)
+    @test Matrix(Fs) ≈ A
+end
+
+# ── Determinant functions ─────────────────────────────────────────────────────
+
+# Positive-definite: logabsdet/logdet/det for HemiCholeskyReal
+let A = (X = rand(4, 4); X'*X + I)
+    F = cholesky(PureHemi, A)
+    la, s = logabsdet(F)
+    @test s ≈ 1.0
+    @test la ≈ log(det(A))
+    @test logdet(F) ≈ log(det(A))
+    @test det(F) ≈ det(A)
+end
+
+# Pivoted: delegates to inner HemiCholeskyReal
+let A = (X = rand(4, 4); X'*X + I)
+    F = cholesky(PureHemi, A, RowMaximum())
+    @test det(F) ≈ det(A)
+    @test logdet(F) ≈ log(det(A))
+    @test logabsdet(F) == logabsdet(F.L)
+end
+
+# HemiCholeskyXY: delegates to inner factorization
+let A = (X = rand(4, 4); X'*X + I)
+    Fs = nullsolver(cholesky(PureHemi, A))
+    @test det(Fs) ≈ det(A)
+    @test logdet(Fs) ≈ log(det(A))
+    @test logabsdet(Fs) == logabsdet(Fs.L)
+end
+
+# Singular: det = 0, logabsdet returns (-Inf, 1)
+let A = (X = rand(3, 5); X'*X)   # 5×5, rank 3
+    F = cholesky(PureHemi, A, tol=1e-10)
+    la, s = logabsdet(F)
+    @test la == -Inf
+    @test s == 1.0
+    @test det(F) == 0.0
+end
+
+# Indefinite (negative determinant): sign = -1, logdet throws DomainError
+let A = [-1.0 0; 0 2]
+    F = cholesky(PureHemi, A)
+    la, s = logabsdet(F)
+    @test s ≈ -1.0
+    @test la ≈ log(abs(det(A)))
+    @test det(F) ≈ det(A)
+    @test_throws DomainError logdet(F)
+    @test_throws DomainError logdet(cholesky(PureHemi, A, RowMaximum()))
+    @test_throws DomainError logdet(nullsolver(cholesky(PureHemi, A)))
+end
+
+# cholesky! with PureHemi (no T) dispatch
+let A = randn(4, 3); A = A'*A
+    F = cholesky!(PureHemi, copy(A))
+    @test Matrix(F) ≈ A
+    F = cholesky!(PureHemi, copy(A), RowMaximum())
+    @test Matrix(F) ≈ A
+end
+
+# ── Pure Julia fallbacks (non-BlasFloat via Double64) ─────────────────────────
+
+@testset "Double64 (pure-Julia fallback path)" begin
+    T = Double64
+    for (label, makeA) in [("dense", A -> A), ("sparse", A -> sparse(tril(A)))]
+        # Positive-definite
+        let A = T[2 1; 1 2]
+            F = cholesky(PureHemi{T}, makeA(A))
+            @test Matrix(F) ≈ A
+            b = rand(T, 2)
+            @test F \ b ≈ A \ b
+        end
+
+        # Indefinite
+        let A = T[-1 0; 0 1]
+            F = cholesky(PureHemi{T}, makeA(A))
+            @test Matrix(F) ≈ A
+        end
+
+        # Singular with nullsolver
+        let X = T.(rand(5,3)); A_sym = X*X'   # rank-3, 5×5
+            F = cholesky(PureHemi{T}, makeA(A_sym), tol=T(1e-20))
+            @test Matrix(F) ≈ A_sym
+        end
+    end
+
+    # Blocked algorithm (exercises update_columns! with vector d)
+    let A = randn(20, 15); A = A'*A
+        A64 = A
+        AT = T.(A)
+        F = cholesky!(PureHemi{T}, copy(AT), blocksize=4)
+        @test Matrix(F) ≈ AT
+    end
+
+    # Pivoted
+    let A = randn(5, 4); A = A'*A
+        AT = T.(A)
+        F = cholesky(PureHemi{T}, AT, RowMaximum())
+        @test Matrix(F) ≈ AT
+    end
+end
 
 end # @testset "Hemireal Cholesky factorization"

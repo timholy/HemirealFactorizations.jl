@@ -21,6 +21,20 @@ Base.copy(F::SparseHemiCholeskyReal) = SparseHemiCholeskyReal(copy(F.L), copy(F.
 Base.:(==)(F1::SparseHemiCholeskyReal, F2::SparseHemiCholeskyReal) = F1.L == F2.L && F1.d == F2.d
 LinearAlgebra.isposdef(F::SparseHemiCholeskyReal) = all(==(Int8(1)), F.d)
 
+function Base.getproperty(F::SparseHemiCholeskyReal{T}, d::Symbol) where T
+    d === :U && return hrmatrix(T, F)'
+    return getfield(F, d)
+end
+
+Base.propertynames(F::SparseHemiCholeskyReal, private::Bool=false) =
+    (:L, :U, :d, (private ? fieldnames(typeof(F)) : ())...)
+
+Base.IteratorSize(::Type{<:SparseHemiCholeskyReal}) = Base.HasLength()
+Base.length(::SparseHemiCholeskyReal) = 2
+Base.IteratorEltype(::Type{<:SparseHemiCholeskyReal}) = Base.EltypeUnknown()
+Base.iterate(F::SparseHemiCholeskyReal{T}) where T = (hrmatrix(T, F), Val(:U))
+Base.iterate(F::SparseHemiCholeskyReal{T}, ::Val{:U}) where T = (hrmatrix(T, F)', Val(:done))
+
 function hrmatrix(::Type{T}, F::SparseHemiCholeskyReal) where T
     n = size(F, 1)
     L = Array{PureHemi{T}}(undef, n, n)
@@ -219,6 +233,18 @@ function Base.:(\)(F::SparseHemiCholeskyReal{T}, b::AbstractVector; forcenull::B
     K = length(b)
     size(F, 1) == K || throw(DimensionMismatch("rhs length $K does not match matrix size $(size(F,1))"))
     return ldiv!(F, Vector{T}(b); forcenull=forcenull)
+end
+
+function LinearAlgebra.rdiv!(B::AbstractMatrix, F::SparseHemiCholeskyReal{T}; forcenull::Bool=false) where T
+    m, n = size(B)
+    size(F, 1) == n || throw(DimensionMismatch("matrix second dimension $n incompatible with factorization size $(size(F,1))"))
+    b = Vector{T}(undef, n)
+    for i in 1:m
+        copyto!(b, view(B, i, :))
+        ldiv!(F, b; forcenull=forcenull)
+        copyto!(view(B, i, :), b)
+    end
+    return B
 end
 
 @inline function mark!(w, w_flag, w_nnz, i, v)
