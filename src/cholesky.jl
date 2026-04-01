@@ -681,7 +681,7 @@ function forwardsubst!(Y, L::AbstractHemiCholesky)
         Lii = _getL(L, i, i)
         if issingular(Lii)
             for jj = 1:si
-                Y[i,jj] = PureHemi{T}(0, gα[jj]/Lii.m)
+                Y[i,jj] = PureHemi{T}(0, -gα[jj]/Lii.m)
             end
             # Add a new singular column
             si += 1
@@ -707,7 +707,7 @@ function forwardsubst!(ytilde::AbstractVector, L::AbstractHemiCholesky, b::Abstr
         end
         Lii = _getL(L, i, i)
         if issingular(Lii)
-            ytilde[i] = PureHemi{T}(0, g/Lii.m)
+            ytilde[i] = PureHemi{T}(0, -g/Lii.m)
         else
             ytilde[i] = g/Lii
         end
@@ -723,7 +723,7 @@ function backwardsubst!(X, H, L::AbstractHemiCholesky, Y)
     si = ns = size(H, 1)        # number of singular diagonals
     for i = K:-1:1
         for jj = 1:nc
-            h[jj] = Y[i,jj]
+            h[jj] = -Y[i,jj]   # - from conjugation (we're solving L'X = Y)
         end
         for j = i+1:K
             Lji = _getL(L, j, i)
