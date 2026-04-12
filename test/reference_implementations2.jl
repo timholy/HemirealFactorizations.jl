@@ -109,7 +109,7 @@ function calcs(F::HemiCholeskyRealRef{T}, x) where T
     return s
 end
 
-function mydiv(F::HemiCholeskyRealRef{T}, b::AbstractVector{T}, w) where T
+function mydivw(F::HemiCholeskyRealRef{T}, b::AbstractVector{T}, w) where T
     y = similar(b, PureHemi{T})
     # Forward substitution to solve L * y = b
     for i in eachindex(y)
@@ -122,12 +122,23 @@ function mydiv(F::HemiCholeskyRealRef{T}, b::AbstractVector{T}, w) where T
         yiμ = -gi / (Liiν * (1 + ri * wi))
         y[i] = PureHemi{T}(yiμ, yiμ * wi)
     end
+    @show y
     x = similar(b, T)
+    rout = similar(w, T)
     for i in reverse(eachindex(y))
         hi = y[i]
         for j in i+1:length(y)
             hi -= conj(HemirealFactorizations._getL(F, j, i)) * x[j]
         end
+        rout[i] = mu(hi) / nu(hi)
+        Lii = conj(HemirealFactorizations._getL(F, i, i))
+        @show Lii hi
+        # x[i] = nu(Lii) \ nu(hi)
+        cμ, cν = Lii.m, Lii.n
+        hμ, hν = hi.m, hi.n
+        x[i] = (cμ * hμ + cν * hν) / (cμ^2 + cν^2)
+        # xμ, xν = hμ / cμ, hν / cν
+        # x[i] = sqrt(abs(xμ * xν)) * sign(xμ + xν)  # heuristic to get the sign right
     end
-    return x
+    return x, rout
 end
