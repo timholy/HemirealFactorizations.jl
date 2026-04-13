@@ -3,25 +3,26 @@ import SparseArrays: SparseMatrixCSC, nzrange, rowvals, nonzeros
 ### Sparse factorization type
 
 struct SparseHemiCholeskyReal{T<:Real} <: AbstractHemiCholesky{T}
-    L::SparseMatrixCSC{T,Int}
+    Lreal::SparseMatrixCSC{T,Int}  # compact real encoding: ν-components of the PureHemi factor
     d::Vector{Int8}
 end
 
-Base.size(F::SparseHemiCholeskyReal) = size(F.L)
-Base.size(F::SparseHemiCholeskyReal, dim::Integer) = size(F.L, dim)
+Base.size(F::SparseHemiCholeskyReal) = size(F.Lreal)
+Base.size(F::SparseHemiCholeskyReal, dim::Integer) = size(F.Lreal, dim)
 Base.eltype(::Type{SparseHemiCholeskyReal{T}}) where T = PureHemi{T}
 
 function _getL(F::SparseHemiCholeskyReal{T}, i::Integer, j::Integer) where T
     dj = F.d[j]
-    nu = F.L[i,j]
+    nu = F.Lreal[i,j]
     ifelse(dj == 0 && i == j, PureHemi{T}(1, 0), PureHemi{T}(dj * nu, nu))
 end
 
-Base.copy(F::SparseHemiCholeskyReal) = SparseHemiCholeskyReal(copy(F.L), copy(F.d))
-Base.:(==)(F1::SparseHemiCholeskyReal, F2::SparseHemiCholeskyReal) = F1.L == F2.L && F1.d == F2.d
+Base.copy(F::SparseHemiCholeskyReal) = SparseHemiCholeskyReal(copy(F.Lreal), copy(F.d))
+Base.:(==)(F1::SparseHemiCholeskyReal, F2::SparseHemiCholeskyReal) = F1.Lreal == F2.Lreal && F1.d == F2.d
 LinearAlgebra.isposdef(F::SparseHemiCholeskyReal) = all(==(Int8(1)), F.d)
 
 function Base.getproperty(F::SparseHemiCholeskyReal{T}, d::Symbol) where T
+    d === :L && return hrmatrix(T, F)
     d === :U && return hrmatrix(T, F)'
     return getfield(F, d)
 end
@@ -61,8 +62,9 @@ function default_tol(A::SparseMatrixCSC)
 end
 
 function default_tol(F::SparseHemiCholeskyReal)
-    δ = default_δ(F.L)
-    nz = nonzeros(F.L)
+    Lreal = F.Lreal
+    δ = default_δ(Lreal)
+    nz = nonzeros(Lreal)
     isempty(nz) && return δ
     δ * maximum(abs, nz)
 end
@@ -207,7 +209,7 @@ LinearAlgebra.cholesky(::Type{PureHemi}, A::SparseMatrixCSC; kwargs...) =
 
 function nullsolver(F::SparseHemiCholeskyReal; tol=default_tol(F))
     X, Y, HF, Q, nullflag = solve_singularities(F; tol=tol)
-    HemiCholeskyXY{eltype(F.L), typeof(F), typeof(HF)}(F, X, Y, HF, Q, nullflag)
+    HemiCholeskyXY{eltype(F.Lreal), typeof(F), typeof(HF)}(F, X, Y, HF, Q, nullflag)
 end
 
 function LinearAlgebra.AbstractMatrix(F::SparseHemiCholeskyReal{T}) where T
