@@ -44,11 +44,11 @@ let A = zeros(4,4)
     @test Matrix(F) ≈ A
     Fb = cholesky(PureHemi, A, RowMaximum(), blocksize=2)
     @test Fb.piv == p
-    @test F.L.L ≈ Fb.L.L
+    @test Matrix(F.L) ≈ Matrix(Fb.L)
     for pp in permutations([1,2,3,4])
         Fb = cholesky(PureHemi, A[pp,pp], RowMaximum(), blocksize=2)
         @test Fb.piv == permute!(invperm(pp), p)
-        @test LowerTriangular(F.L.L) ≈ LowerTriangular(Fb.L.L)
+        @test Matrix(F.L) ≈ Matrix(Fb.L)
         @test Matrix(Fb) ≈ A[pp,pp]
     end
 end

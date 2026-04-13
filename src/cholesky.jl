@@ -51,14 +51,14 @@ Matrix factorization type for the hemireal Cholesky factorization of a real symm
 This is the return type of [`cholesky`](@ref) and [`cholesky!`](@ref) for real input matrices.
 
 The factorization computes a lower-triangular hemireal matrix `L_h` satisfying `A = L_h * L_h'`.
-The ν-components of `L_h` are stored in the real matrix `F.L`, and the sign of each diagonal
-entry is stored as `Int8` in `F.d` (values in `{-1, 0, 1}`). The `(i,j)` entry of `L_h` for
-`i ≥ j` is `PureHemi(F.d[j]*F.L[i,j], F.L[i,j])`.
+The ν-components of `L_h` are stored compactly in the internal real matrix `F.Lreal`, and the
+sign of each diagonal entry is stored as `Int8` in `F.d` (values in `{-1, 0, 1}`). The `(i,j)`
+entry of `L_h` for `i ≥ j` is `PureHemi(F.d[j]*F.Lreal[i,j], F.Lreal[i,j])`.
 
-A zero in `F.d` indicates a singular direction. The original matrix is recovered by
-`Matrix(F)`, satisfying `Matrix(F) ≈ A`.
+The full lower-triangular [`PureHemi`](@ref) factor is accessible as `F.L`, and its transpose
+as `F.U = F.L'` (the upper-triangular factor). A zero in `F.d` indicates a singular direction.
+The original matrix is recovered by `Matrix(F)`, satisfying `Matrix(F) ≈ A`.
 
-The lower-triangular factor is also accessible as `F.U = F.L'` (the upper-triangular factor).
 Iterating the decomposition produces the components `L` and `U` in order.
 
 The following functions are available for `HemiCholeskyReal` objects:
@@ -67,8 +67,8 @@ The following functions are available for `HemiCholeskyReal` objects:
 [`issuccess`](@ref), [`rank`](@ref), [`nullsolver`](@ref).
 """
 struct HemiCholeskyReal{T<:Real, S<:AbstractMatrix{T}} <: AbstractHemiCholesky{T}
-    L::S
-    d::Vector{Int8}  # diagonal sign (-1, 0, or 1)
+    Lreal::S          # compact real encoding: ν-components of the PureHemi factor
+    d::Vector{Int8}   # diagonal sign (-1, 0, or 1)
 end
 
 """
@@ -143,12 +143,15 @@ LinearAlgebra.isposdef(F::HemiCholeskyPivot) = isposdef(F.L)
 LinearAlgebra.isposdef(F::HemiCholesky) = all(x -> x.m > 0 && x.n > 0, diag(F.L))
 
 Base.copy(F::HemiCholesky) = HemiCholesky(copy(F.L))
-Base.copy(F::HemiCholeskyReal) = HemiCholeskyReal(copy(F.L), copy(F.d))
+Base.copy(F::HemiCholeskyReal) = HemiCholeskyReal(copy(F.Lreal), copy(F.d))
 Base.copy(F::HemiCholeskyPivot) = HemiCholeskyPivot(copy(F.L), copy(F.piv))
 
 Base.:(==)(F1::HemiCholesky, F2::HemiCholesky) = F1.L == F2.L
-Base.:(==)(F1::HemiCholeskyReal, F2::HemiCholeskyReal) = F1.L == F2.L && F1.d == F2.d
+Base.:(==)(F1::HemiCholeskyReal, F2::HemiCholeskyReal) = F1.Lreal == F2.Lreal && F1.d == F2.d
 Base.:(==)(F1::HemiCholeskyPivot, F2::HemiCholeskyPivot) = F1.L == F2.L && F1.piv == F2.piv
+
+Base.isapprox(F1::HemiCholeskyReal, F2::HemiCholeskyReal; kwargs...) =
+    isapprox(F1.Lreal, F2.Lreal; kwargs...) && F1.d == F2.d
 
 function Base.getproperty(F::HemiCholesky, d::Symbol)
     d === :U && return F.L'
@@ -158,7 +161,11 @@ end
 Base.propertynames(F::HemiCholesky, private::Bool=false) =
     (:L, :U, (private ? fieldnames(typeof(F)) : ())...)
 
+Base.size(F::HemiCholeskyReal) = size(F.Lreal)
+Base.size(F::HemiCholeskyReal, d::Integer) = size(F.Lreal, d)
+
 function Base.getproperty(F::HemiCholeskyReal{T}, d::Symbol) where T
+    d === :L && return hrmatrix(T, F)
     d === :U && return hrmatrix(T, F)'
     return getfield(F, d)
 end
@@ -193,7 +200,7 @@ Base.propertynames(F::HemiCholeskyPivot, private::Bool=false) =
 
 function _getL(F::HemiCholeskyReal{T}, i::Integer, j::Integer) where T
     d = F.d[j]
-    nu = F.L[i,j]
+    nu = F.Lreal[i,j]
     ifelse(d == 0 && i==j, PureHemi{T}(1,0), PureHemi{T}(d*nu, nu))
 end
 
@@ -809,12 +816,13 @@ default_δ(A) = 10 * size(A, 1) * eps(floattype(real(eltype(A))))
 default_tol(A) = default_δ(A) * maximum(abs, A)
 function default_tol(L::HemiCholeskyReal)
     K = size(L, 1)
-    δ = default_δ(L.L)
+    Lreal = L.Lreal
+    δ = default_δ(Lreal)
     K == 0 && return δ
-    ma = zero(eltype(L.L))
+    ma = zero(eltype(Lreal))
     for j = 1:K
         for i = j:K
-            ma = max(ma, abs(L.L[i,j]))
+            ma = max(ma, abs(Lreal[i,j]))
         end
     end
     δ * ma
@@ -829,7 +837,8 @@ function LinearAlgebra.logabsdet(F::HemiCholeskyReal{T}) where T
     n = size(F, 1)
     any(==(Int8(0)), d) && return (T(-Inf), one(T))
     sign_det = T(prod(Int.(d)))
-    logabs = n * log(2*one(T)) + 2 * sum(log(F.L[j,j]) for j in 1:n)
+    Lreal = F.Lreal
+    logabs = n * log(2*one(T)) + 2 * sum(log(Lreal[j,j]) for j in 1:n)
     return (logabs, sign_det)
 end
 
