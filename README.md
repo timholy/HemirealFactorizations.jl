@@ -6,7 +6,7 @@
 # Introduction
 
 Cholesky factorizations over the hemireals can be computed for
-arbitrary symmetric matrices, including singular and indefinite
+arbitrary symmetric matrices, including indefinite and singular
 matrices.  For singular matrices, the behavior is reminiscent of the
 singular value decomposition, but the performance is much better.
 
@@ -20,8 +20,10 @@ F = cholfact(PureHemi, A)
 ```
 Then you can use `F` to solve equations, e.g.,
 ```jl
-x = F\b
+x = F \ b
 ```
+If `A` has zero pivots, you will need to use `x = nullsolver(F) \ b` instead.
+
 If `A` is singular, this should be the least-squares solution.
 
 ## Supported operations

@@ -19,6 +19,8 @@ end
 
 Base.copy(F::SparseHemiCholeskyReal) = SparseHemiCholeskyReal(copy(F.Lreal), copy(F.d))
 Base.:(==)(F1::SparseHemiCholeskyReal, F2::SparseHemiCholeskyReal) = F1.Lreal == F2.Lreal && F1.d == F2.d
+Base.isapprox(F1::SparseHemiCholeskyReal{T}, F2::SparseHemiCholeskyReal{T}; kwargs...) where T =
+    isapprox(F1.Lreal, F2.Lreal; kwargs...) && F1.d == F2.d
 LinearAlgebra.isposdef(F::SparseHemiCholeskyReal) = all(==(Int8(1)), F.d)
 
 function Base.getproperty(F::SparseHemiCholeskyReal{T}, d::Symbol) where T
@@ -119,7 +121,7 @@ function LinearAlgebra.cholesky(::Type{PureHemi{T}}, A::SparseMatrixCSC; tol=def
         # w[i] for every i ≥ j that has a nonzero in column k of L.
         for k in row_preds[j]
             dk = d[k]
-            dk == 0 && continue          # singular column: contribution is zero
+            dk == 0 && continue          # zero-pivot column
 
             # Locate row j inside the sorted column k of L (guaranteed to exist).
             pos = searchsortedfirst(L_rows[k], j)
@@ -141,7 +143,7 @@ function LinearAlgebra.cholesky(::Type{PureHemi{T}}, A::SparseMatrixCSC; tol=def
 
         if abs(Ajj) <= tol
             d[j] = 0
-            # For a singular column the rank-1 update to future columns is zero
+            # For a zero-pivot column the rank-1 update to future columns is zero
             # (factor 2*d[j] = 0), so we do NOT add j to row_preds[i].
             # However, the off-diagonal entries are still needed by forward/backward
             # substitution: _getL returns PureHemi(0, L[i,j]) for d[j]=0, i>j.
@@ -208,7 +210,7 @@ LinearAlgebra.cholesky(::Type{PureHemi}, A::SparseMatrixCSC; kwargs...) =
 ### Solve and nullspace
 
 function nullsolver(F::SparseHemiCholeskyReal; tol=default_tol(F))
-    X, Y, HF, Q, nullflag = solve_singularities(F; tol=tol)
+    X, Y, HF, Q, nullflag = solve_zeropivots(F; tol=tol)
     HemiCholeskyXY{eltype(F.Lreal), typeof(F), typeof(HF)}(F, X, Y, HF, Q, nullflag)
 end
 

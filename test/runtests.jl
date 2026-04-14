@@ -40,15 +40,15 @@ let A = zeros(4,4)
     F = cholesky(PureHemi, A, RowMaximum())
     p = [4,1,2,3]
     @test F.piv == p
-    @test Matrix(F.L) ≈ A[p,p]
+    @test Matrix(F.F) ≈ A[p,p]
     @test Matrix(F) ≈ A
     Fb = cholesky(PureHemi, A, RowMaximum(), blocksize=2)
     @test Fb.piv == p
-    @test Matrix(F.L) ≈ Matrix(Fb.L)
+    @test Matrix(F.F) ≈ Matrix(Fb.F)
     for pp in permutations([1,2,3,4])
         Fb = cholesky(PureHemi, A[pp,pp], RowMaximum(), blocksize=2)
         @test Fb.piv == permute!(invperm(pp), p)
-        @test Matrix(F.L) ≈ Matrix(Fb.L)
+        @test Matrix(F.F) ≈ Matrix(Fb.F)
         @test Matrix(Fb) ≈ A[pp,pp]
     end
 end
@@ -66,14 +66,14 @@ for p in (NoPivot(), RowMaximum())
     @test Matrix(F) ≈ A
 end
 
-# ── New API features: dense and sparse ────────────────────────────────────────
+# ── API features: dense and sparse ────────────────────────────────────────────
 
 for (label, makeA) in [("dense", A -> A), ("sparse", A -> sparse(tril(A)))]
 
     # issuccess: always true regardless of definiteness
     @test issuccess(cholesky(PureHemi, makeA([2.0 1; 1 3])))
     @test issuccess(cholesky(PureHemi, makeA([-1.0 0; 0 1])))   # indefinite
-    @test issuccess(cholesky(PureHemi, makeA([0.0 1; 1 0])))    # singular diagonal
+    @test issuccess(cholesky(PureHemi, makeA([0.0 1; 1 0])))    # zero-pivot diagonal
 
     # Iteration: L, U = F yields the lower- and upper-triangular PureHemi factors
     let A = [2.0 1; 1 3]
@@ -103,7 +103,7 @@ for (label, makeA) in [("dense", A -> A), ("sparse", A -> sparse(tril(A)))]
 
 end
 
-# ── New API features: dense only (pivoting) ───────────────────────────────────
+# ── API features: dense only (pivoting) ───────────────────────────────────────
 
 # issuccess for pivoted factorization
 @test issuccess(cholesky(PureHemi, [2.0 1; 1 3], RowMaximum()))
@@ -120,10 +120,11 @@ let A = [2.0 2 1; 2 3 1; 1 1 2]
     P = F.P
     @test P' * P ≈ I                    # P is a permutation matrix
     @test P * P' ≈ I
-    @test Matrix(F.L) ≈ A[F.p, F.p]    # inner factor reconstructs permuted A
-    L, U = F.L
+    @test Matrix(F.F) ≈ A[F.p, F.p]    # inner factor reconstructs permuted A
+    L, U = F.F
+    @test F.L == L                      # .L matches the inner HemiCholeskyReal's L
     @test F.U == U                      # .U matches the inner HemiCholeskyReal's U
-    @test L * F.U ≈ A[F.p, F.p]
+    @test L * U ≈ A[F.p, F.p]
 end
 
 # rdiv! for HemiCholeskyPivot
@@ -179,14 +180,18 @@ let A = [2.0 1; 1 2]
     @test F \ b ≈ A \ b
 end
 
-# Singular case: isposdef false and \ throws without forcenull
+# Diagonal-zeros case: isposdef false and \ throws without nullsolver
 let A = [0.0 1; 1 0]
     F_real = cholesky(PureHemi, A)
     L, U = F_real
     F = HemiCholesky(L)
     @test !isposdef(F)
     b = rand(2)
-    @test_throws ErrorException F \ b
+    @test_throws "There were zero diagonals" F \ b
+    @test nullsolver(F_real) \ b ≈ A \ b
+    Fpiv = cholesky(PureHemi, A, RowMaximum())
+    @test_throws "There were zero diagonals" Fpiv \ b
+    @test nullsolver(Fpiv) \ b ≈ A \ b
 end
 
 # show for HemiCholeskyXY
@@ -281,13 +286,19 @@ end
 
     # isposdef: true only for positive-definite matrices
     let A = (X = rand(4, 4); X'*X + I)
-        @test isposdef(cholesky(PureHemi, makeA(A)))
+        F = cholesky(PureHemi, makeA(A))
+        @test isposdef(F)
+        @test isposdef(nullsolver(F))
     end
-    let A = [-1.0 0; 0 1]
-        @test !isposdef(cholesky(PureHemi, makeA(A)))  # indefinite
+    let A = [-1.0 0; 0 1]  # indefinite
+        F = cholesky(PureHemi, makeA(A))
+        @test !isposdef(F)
+        @test !isposdef(nullsolver(F))
     end
-    let A = [0.0 1; 1 0]
-        @test !isposdef(cholesky(PureHemi, makeA(A)))  # zero diagonal → singular
+    let A = [0.0 1; 1 0]   # also indefinite
+        F = cholesky(PureHemi, makeA(A))
+        @test !isposdef(F)
+        @test !isposdef(nullsolver(F))
     end
 
     # copy: produces an independent equal copy
@@ -304,6 +315,10 @@ end
         G = cholesky(PureHemi, makeA(A))
         @test F == G
         @test cholesky(PureHemi, makeA(A)) != cholesky(PureHemi, makeA(A + I))
+        A1 = A + Diagonal(1e-10*rand(4))  # same sparsity pattern, different values
+        G = cholesky(PureHemi, makeA(A1))
+        @test F != G
+        @test F ≈ G
     end
 end # @testset "$label"
 
@@ -376,7 +391,7 @@ let A = (X = rand(4, 4); X'*X + I)
     F = cholesky(PureHemi, A, RowMaximum())
     @test det(F) ≈ det(A)
     @test logdet(F) ≈ log(det(A))
-    @test logabsdet(F) == logabsdet(F.L)
+    @test logabsdet(F) == logabsdet(F.F)
 end
 
 # HemiCholeskyXY: delegates to inner factorization
@@ -384,7 +399,7 @@ let A = (X = rand(4, 4); X'*X + I)
     Fs = nullsolver(cholesky(PureHemi, A))
     @test det(Fs) ≈ det(A)
     @test logdet(Fs) ≈ log(det(A))
-    @test logabsdet(Fs) == logabsdet(Fs.L)
+    @test logabsdet(Fs) == logabsdet(Fs.F)
 end
 
 # Singular: det = 0, logabsdet returns (-Inf, 1)
