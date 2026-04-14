@@ -40,15 +40,15 @@ let A = zeros(4,4)
     F = cholesky(PureHemi, A, RowMaximum())
     p = [4,1,2,3]
     @test F.piv == p
-    @test Matrix(F.L) ≈ A[p,p]
+    @test Matrix(F.F) ≈ A[p,p]
     @test Matrix(F) ≈ A
     Fb = cholesky(PureHemi, A, RowMaximum(), blocksize=2)
     @test Fb.piv == p
-    @test Matrix(F.L) ≈ Matrix(Fb.L)
+    @test Matrix(F.F) ≈ Matrix(Fb.F)
     for pp in permutations([1,2,3,4])
         Fb = cholesky(PureHemi, A[pp,pp], RowMaximum(), blocksize=2)
         @test Fb.piv == permute!(invperm(pp), p)
-        @test Matrix(F.L) ≈ Matrix(Fb.L)
+        @test Matrix(F.F) ≈ Matrix(Fb.F)
         @test Matrix(Fb) ≈ A[pp,pp]
     end
 end
@@ -66,7 +66,7 @@ for p in (NoPivot(), RowMaximum())
     @test Matrix(F) ≈ A
 end
 
-# ── New API features: dense and sparse ────────────────────────────────────────
+# ── API features: dense and sparse ────────────────────────────────────────────
 
 for (label, makeA) in [("dense", A -> A), ("sparse", A -> sparse(tril(A)))]
 
@@ -103,7 +103,7 @@ for (label, makeA) in [("dense", A -> A), ("sparse", A -> sparse(tril(A)))]
 
 end
 
-# ── New API features: dense only (pivoting) ───────────────────────────────────
+# ── API features: dense only (pivoting) ───────────────────────────────────────
 
 # issuccess for pivoted factorization
 @test issuccess(cholesky(PureHemi, [2.0 1; 1 3], RowMaximum()))
@@ -120,10 +120,11 @@ let A = [2.0 2 1; 2 3 1; 1 1 2]
     P = F.P
     @test P' * P ≈ I                    # P is a permutation matrix
     @test P * P' ≈ I
-    @test Matrix(F.L) ≈ A[F.p, F.p]    # inner factor reconstructs permuted A
-    L, U = F.L
+    @test Matrix(F.F) ≈ A[F.p, F.p]    # inner factor reconstructs permuted A
+    L, U = F.F
+    @test F.L == L                      # .L matches the inner HemiCholeskyReal's L
     @test F.U == U                      # .U matches the inner HemiCholeskyReal's U
-    @test L * F.U ≈ A[F.p, F.p]
+    @test L * U ≈ A[F.p, F.p]
 end
 
 # rdiv! for HemiCholeskyPivot
@@ -179,7 +180,7 @@ let A = [2.0 1; 1 2]
     @test F \ b ≈ A \ b
 end
 
-# Singular case: isposdef false and \ throws without forcenull
+# Diagonal-zeros case: isposdef false and \ throws without forcenull
 let A = [0.0 1; 1 0]
     F_real = cholesky(PureHemi, A)
     L, U = F_real
@@ -376,7 +377,7 @@ let A = (X = rand(4, 4); X'*X + I)
     F = cholesky(PureHemi, A, RowMaximum())
     @test det(F) ≈ det(A)
     @test logdet(F) ≈ log(det(A))
-    @test logabsdet(F) == logabsdet(F.L)
+    @test logabsdet(F) == logabsdet(F.F)
 end
 
 # HemiCholeskyXY: delegates to inner factorization
@@ -384,7 +385,7 @@ let A = (X = rand(4, 4); X'*X + I)
     Fs = nullsolver(cholesky(PureHemi, A))
     @test det(Fs) ≈ det(A)
     @test logdet(Fs) ≈ log(det(A))
-    @test logabsdet(Fs) == logabsdet(Fs.L)
+    @test logabsdet(Fs) == logabsdet(Fs.F)
 end
 
 # Singular: det = 0, logabsdet returns (-Inf, 1)

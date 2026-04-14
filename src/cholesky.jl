@@ -94,61 +94,87 @@ The following functions are available for `HemiCholeskyPivot` objects:
 [`issuccess`](@ref), [`rank`](@ref), [`nullsolver`](@ref).
 """
 struct HemiCholeskyPivot{T<:Real, S<:AbstractMatrix{T}} <: AbstractHemiCholesky{T}
-    L::HemiCholeskyReal{T, S}
+    F::HemiCholeskyReal{T, S}
     piv::Vector{Int}
 end
 
 """
-    HemiCholeskyXY{T<:Real, Ltype<:AbstractHemiCholesky, Htype} <: AbstractHemiCholesky{T}
+    HemiCholeskyXY{T<:Real, Ftype<:AbstractHemiCholesky, Htype} <: AbstractHemiCholesky{T}
 
-Extended hemireal Cholesky factorization that augments a [`HemiCholeskyReal`](@ref) or
-[`HemiCholeskyPivot`](@ref) with null-space information, enabling stable least-squares solving
-for singular matrices. Obtained from [`nullsolver`](@ref).
+Extended hemireal Cholesky factorization that augments a
+[`HemiCholeskyReal`](@ref) or [`HemiCholeskyPivot`](@ref) with zero-pivot
+handling, enabling stable least-squares solutions. Obtained from
+[`nullsolver`](@ref).
 
-When `F::HemiCholeskyXY`, `F \\ b` returns the minimum-norm least-squares solution. The
-numerical rank is `rank(F)`.
+When `F::HemiCholeskyXY`, `F \\ b` returns the minimum-norm least-squares
+solution. The numerical rank is `rank(F)`.
 """
-struct HemiCholeskyXY{T<:Real,Ltype<:AbstractHemiCholesky,Htype} <: AbstractHemiCholesky{T}
-    L::Ltype
+struct HemiCholeskyXY{T<:Real,Ftype<:AbstractHemiCholesky,Htype} <: AbstractHemiCholesky{T}
+    F::Ftype
     X::Matrix{T}
     Y::Matrix{PureHemi{T}}
     HF::Htype
     Q::Matrix{T}
     nullflag::BitVector
 end
-HemiCholeskyXY(L::HemiCholeskyReal; tol=default_tol(L)) = nullsolver(L; tol=tol)
+HemiCholeskyXY(F::HemiCholeskyReal; tol=default_tol(F)) = nullsolver(F; tol=tol)
 
 """
     nullsolver(F::Union{HemiCholeskyReal, HemiCholeskyPivot, SparseHemiCholeskyReal}; tol) -> HemiCholeskyXY
 
-Augment a hemireal Cholesky factorization `F` with null-space information, returning a
-[`HemiCholeskyXY`](@ref) that can solve singular systems stably via `\\`. The result `Fs`
+Augment a hemireal Cholesky factorization `F` with zero-pivot handling,
+returning a [`HemiCholeskyXY`](@ref). This is needed for non-singular systems
+with zero pivots, but it also handles singular systems for which the result `Fs`
 satisfies `Fs \\ b ≈ svd(A) \\ b` (minimum-norm least-squares solution).
 
-The `tol` keyword controls the threshold for identifying null directions (default: a multiple
-of machine epsilon scaled by the factor norm).
+The `tol` keyword controls the threshold for identifying null directions
+(default: a multiple of machine epsilon scaled by the factor norm).
+
+# Examples
+
+```jldoctest
+julia> A = [0 1; 1 0];   # nonsingular but with zero pivots
+
+julia> F = cholesky(PureHemi, A)
+2×2 HemiCholeskyReal{Float64, Matrix{Float64}}:
+ 1.0μ + 0.0ν  0.0μ + 0.0ν
+ 0.0μ + 1.0ν  1.0μ + 0.0ν
+
+julia> F \\ [0.2, 0.3]
+ERROR: There were zero diagonals; use `nullsolver(F)\\b` or, if you're sure all zeros correspond to null directions, `(\\)(F, b, forcenull=true)`.
+Stacktrace:
+[...]
+
+julia> nullsolver(F) \\ [0.2, 0.3]
+2-element Vector{Float64}:
+ 0.3
+ 0.2
+```
 """
-function nullsolver(L::Union{HemiCholeskyReal,HemiCholeskyPivot}; tol=default_tol(L))
-    X, Y, HF, Q, nullflag = solve_singularities(L; tol=tol)
-    HemiCholeskyXY{eltype(X), typeof(L), typeof(HF)}(L, X, Y, HF, Q, nullflag)
+function nullsolver(F::Union{HemiCholeskyReal,HemiCholeskyPivot}; tol=default_tol(F))
+    X, Y, HF, Q, nullflag = solve_singularities(F; tol=tol)
+    HemiCholeskyXY{eltype(X), typeof(F), typeof(HF)}(F, X, Y, HF, Q, nullflag)
 end
 
 Base.size(F::AbstractHemiCholesky) = size(F.L)
 Base.size(F::AbstractHemiCholesky, d::Integer) = size(F.L, d)
+Base.size(F::HemiCholeskyXY) = size(F.F)
+Base.size(F::HemiCholeskyXY, d::Integer) = size(F.F, d)
 Base.eltype(::Type{<:AbstractHemiCholesky{T}}) where T = PureHemi{T}
 
 LinearAlgebra.issuccess(::AbstractHemiCholesky) = true
 LinearAlgebra.isposdef(F::HemiCholeskyReal) = all(==(Int8(1)), F.d)
-LinearAlgebra.isposdef(F::HemiCholeskyPivot) = isposdef(F.L)
+LinearAlgebra.isposdef(F::HemiCholeskyPivot) = isposdef(F.F)
+LinearAlgebra.isposdef(F::HemiCholeskyXY) = isposdef(F.F)
 LinearAlgebra.isposdef(F::HemiCholesky) = all(x -> x.m > 0 && x.n > 0, diag(F.L))
 
 Base.copy(F::HemiCholesky) = HemiCholesky(copy(F.L))
 Base.copy(F::HemiCholeskyReal) = HemiCholeskyReal(copy(F.Lreal), copy(F.d))
-Base.copy(F::HemiCholeskyPivot) = HemiCholeskyPivot(copy(F.L), copy(F.piv))
+Base.copy(F::HemiCholeskyPivot) = HemiCholeskyPivot(copy(F.F), copy(F.piv))
 
 Base.:(==)(F1::HemiCholesky, F2::HemiCholesky) = F1.L == F2.L
 Base.:(==)(F1::HemiCholeskyReal, F2::HemiCholeskyReal) = F1.Lreal == F2.Lreal && F1.d == F2.d
-Base.:(==)(F1::HemiCholeskyPivot, F2::HemiCholeskyPivot) = F1.L == F2.L && F1.piv == F2.piv
+Base.:(==)(F1::HemiCholeskyPivot, F2::HemiCholeskyPivot) = F1.F == F2.F && F1.piv == F2.piv
 
 Base.isapprox(F1::HemiCholeskyReal, F2::HemiCholeskyReal; kwargs...) =
     isapprox(F1.Lreal, F2.Lreal; kwargs...) && F1.d == F2.d
@@ -186,8 +212,10 @@ function Base.getproperty(F::HemiCholeskyPivot{T}, d::Symbol) where T
             P[getfield(F, :piv)[i], i] = one(T)
         end
         return P
+    elseif d === :L
+        return hrmatrix(T, F.F)
     elseif d === :U
-        return hrmatrix(T, F.L)'
+        return hrmatrix(T, F.F)'
     else
         return getfield(F, d)
     end
@@ -196,7 +224,7 @@ end
 Base.propertynames(F::HemiCholeskyPivot, private::Bool=false) =
     (:L, :U, :p, :P, (private ? (:piv,) : ())...)
 
-# Base.eltype(::Type{HemiCholeskyXY{T,Ltype}}) where {T,Ltype} = PureHemi{T}
+# Base.eltype(::Type{HemiCholeskyXY{T,Ftype}}) where {T,Ftype} = PureHemi{T}
 
 function _getL(F::HemiCholeskyReal{T}, i::Integer, j::Integer) where T
     d = F.d[j]
@@ -222,8 +250,8 @@ function hrmatrix(::Type{T}, F::HemiCholeskyReal) where T
     end
     L
 end
-hrmatrix(::Type{T}, F::HemiCholeskyPivot) where T = hrmatrix(T, F.L)
-hrmatrix(::Type{T}, F::HemiCholeskyXY) where T = hrmatrix(T, F.L)
+hrmatrix(::Type{T}, F::HemiCholeskyPivot) where T = hrmatrix(T, F.F)
+hrmatrix(::Type{T}, F::HemiCholeskyXY) where T = hrmatrix(T, F.F)
 
 function Base.show(io::IO, ::MIME"text/plain", F::AbstractHemiCholesky)
     println(io, Base.dims2string(size(F)), " ", typeof(F), ':')
@@ -232,9 +260,9 @@ end
 _show(io::IO, F::AbstractHemiCholesky{T}) where T = Base.print_matrix(IOContext(io, :limit => true), hrmatrix(T, F))
 function _show(io::IO, F::HemiCholeskyPivot{T}) where T
     Base.print_matrix(IOContext(io, :limit => true), hrmatrix(T, F))
-    println(io, "\n  permutation: ", F.piv)
+    print(io, "\n  permutation: ", F.piv)
 end
-_show(io::IO, F::HemiCholeskyXY{T}) where T = _show(io, F.L)
+_show(io::IO, F::HemiCholeskyXY{T}) where T = _show(io, F.F)
 
 LinearAlgebra.adjoint(F::AbstractHemiCholesky) = F
 
@@ -261,12 +289,12 @@ function LinearAlgebra.AbstractMatrix(F::HemiCholesky{T}) where T
 end
 
 function LinearAlgebra.AbstractMatrix(F::HemiCholeskyPivot{T}) where T
-    M = AbstractMatrix(F.L)
+    M = AbstractMatrix(F.F)
     ip = invperm(F.piv)
     return M[ip, ip]
 end
 
-LinearAlgebra.AbstractMatrix(F::HemiCholeskyXY) = AbstractMatrix(F.L)
+LinearAlgebra.AbstractMatrix(F::HemiCholeskyXY) = AbstractMatrix(F.F)
 
 LinearAlgebra.AbstractArray(F::AbstractHemiCholesky) = AbstractMatrix(F)
 Base.Matrix(F::AbstractHemiCholesky) = convert(Array, AbstractMatrix(F))
@@ -312,7 +340,7 @@ See also [`cholesky!`](@ref), [`HemiCholeskyReal`](@ref), [`HemiCholeskyPivot`](
 """
 function LinearAlgebra.cholesky(::Type{PureHemi{T}}, A::AbstractMatrix, pivot::Union{NoPivot,RowMaximum}=NoPivot(); tol=default_tol(A), blocksize=default_blocksize(T)) where T
     size(A, 1) == size(A, 2) || throw(DimensionMismatch("A must be square"))
-    A0 = Array{floattype(T)}(undef, size(A))
+    A0 = Matrix{floattype(T)}(undef, size(A))
     copy!(A0, A)
     cholesky!(PureHemi{T}, A0, pivot; tol=tol, blocksize=blocksize)
 end
@@ -552,10 +580,10 @@ function solve_singularities(L; tol=default_tol(L))
     ns = nzerodiags(L)
     K = size(L, 1)
     T = real(eltype(L))
-    X = Array{T}(undef, K, ns)
-    H = Array{T}(undef, ns, ns)
-    Y = Array{PureHemi{T}}(undef, K, ns)
-    ns == 0 && return X, Y, lu!(H), Array{T}(undef, K, 0), falses(0)
+    X = Matrix{T}(undef, K, ns)
+    H = Matrix{T}(undef, ns, ns)
+    Y = Matrix{PureHemi{T}}(undef, K, ns)
+    ns == 0 && return X, Y, lu!(H), Matrix{T}(undef, K, 0), falses(0)
     forwardsubst!(Y, L)
     backwardsubst!(X, H, L, Y)
     # Find the columns of X in the null space
@@ -563,7 +591,7 @@ function solve_singularities(L; tol=default_tol(L))
     nullflag = dropdims(Hmax; dims=2) .< tol
     # Find an orthonormal basis for the null space
     if sum(nullflag) == 0
-        Q = Array{T}(undef, K, 0)
+        Q = Matrix{T}(undef, K, 0)
     else
         Q, _ = qr(X[:,nullflag])
     end
@@ -571,7 +599,7 @@ function solve_singularities(L; tol=default_tol(L))
     HF = lu!(H[.!nullflag, .!nullflag])
     X, Y, HF, Q, nullflag
 end
-solve_singularities(L::HemiCholeskyPivot; tol=default_tol(L)) = solve_singularities(L.L; tol=tol)
+solve_singularities(F::HemiCholeskyPivot; tol=default_tol(F)) = solve_singularities(F.F; tol=tol)
 
 function LinearAlgebra.ldiv!(F::HemiCholeskyReal{T}, b::AbstractVector; forcenull::Bool=false) where T
     K = length(b)
@@ -588,7 +616,7 @@ end
 function LinearAlgebra.ldiv!(F::HemiCholeskyPivot{T}, b::AbstractVector; forcenull::Bool=false) where T
     size(F, 1) == length(b) || throw(DimensionMismatch("rhs must have length $(length(b)) consistent with matrix size $(size(F,1))"))
     permute!(b, F.piv)
-    ldiv!(F.L, b; forcenull=forcenull)
+    ldiv!(F.F, b; forcenull=forcenull)
     invpermute!(b, F.piv)
     return b
 end
@@ -617,32 +645,32 @@ function LinearAlgebra.rdiv!(B::AbstractMatrix, F::HemiCholeskyPivot{T}; forcenu
     return B
 end
 
-function (\)(L::Union{HemiCholesky{T},HemiCholeskyReal{T},HemiCholeskyPivot{T}}, b::AbstractVector; forcenull::Bool=false) where T<:Real
+function (\)(F::Union{HemiCholesky{T},HemiCholeskyReal{T},HemiCholeskyPivot{T}}, b::AbstractVector; forcenull::Bool=false) where T<:Real
     K = length(b)
-    size(L,1) == K || throw(DimensionMismatch("rhs must have a length ($(length(b))) consistent with the size $(size(L)) of the matrix"))
-    if L isa HemiCholesky
-        bp, Lp = pivot(L, b)
+    size(F,1) == K || throw(DimensionMismatch("rhs must have a length ($(length(b))) consistent with the size $(size(F)) of the matrix"))
+    if F isa HemiCholesky
+        bp, Lp = pivot(F, b)
         nnull = nzerodiags(Lp)
         if nnull != 0 && !forcenull
-            error("There were zero diagonals; use `nullsolver(L)\\b` or, if you're sure all zeros correspond to null directions, (\\)(L, b, forcenull=true)`.")
+            error("There were zero diagonals; use `nullsolver(F)\\b` or, if you're sure all zeros correspond to null directions, (\\)(F, b, forcenull=true)`.")
         end
-        ytilde = Array{PureHemi{T}}(undef, K)
+        ytilde = Vector{PureHemi{T}}(undef, K)
         forwardsubst!(ytilde, Lp, bp)
-        xtilde = Array{T}(undef, K)
-        htilde = Array{T}(undef, nnull)
+        xtilde = Vector{T}(undef, K)
+        htilde = Vector{T}(undef, nnull)
         backwardsubst!(xtilde, htilde, Lp, ytilde)
-        return ipivot(L, xtilde)
+        return ipivot(F, xtilde)
     else
-        return ldiv!(L, Vector{T}(b); forcenull=forcenull)
+        return ldiv!(F, Vector{T}(b); forcenull=forcenull)
     end
 end
 
 function (\)(F::HemiCholeskyXY{T}, b::AbstractVector) where T
-    L = F.L
+    FF = F.F
     K = length(b)
-    size(L,1) == K || throw(DimensionMismatch("rhs must have a length ($(length(b))) consistent with the size $(size(L)) of the matrix"))
-    bp, Lp = pivot(L, b)
-    ytilde = Array{PureHemi{T}}(undef, K)
+    size(FF,1) == K || throw(DimensionMismatch("rhs must have a length ($(length(b))) consistent with the size $(size(FF)) of the matrix"))
+    bp, Lp = pivot(FF, b)
+    ytilde = Vector{PureHemi{T}}(undef, K)
     nnull = size(F.Q, 2)
     if nnull == 0
         forwardsubst!(ytilde, Lp, bp)
@@ -652,10 +680,10 @@ function (\)(F::HemiCholeskyXY{T}, b::AbstractVector) where T
         forwardsubst!(ytilde, Lp, bp - F.Q*bproj)
     end
     ns = size(F.X, 2)
-    htilde = Array{T}(undef, ns)
-    xtilde = Array{T}(undef, K)
+    htilde = Vector{T}(undef, ns)
+    xtilde = Vector{T}(undef, K)
     backwardsubst!(xtilde, htilde, Lp, ytilde)
-    ns == 0 && return ipivot(L, xtilde)
+    ns == 0 && return ipivot(FF, xtilde)
     keep = .!F.nullflag
     α = -(F.HF\htilde[keep])
     x = xtilde+F.X[:,keep]*α
@@ -664,7 +692,7 @@ function (\)(F::HemiCholeskyXY{T}, b::AbstractVector) where T
         xproj = F.Q'*x
         x = x - F.Q*xproj
     end
-    ipivot(L, x)
+    ipivot(FF, x)
 end
 
 # Forward-substitution with right hand side zero: find the
@@ -772,40 +800,40 @@ function pivot!(A, i::Integer, j::Integer)
 end
 
 pivot(L, b) = b, L
-pivot(L::HemiCholeskyPivot, b) = b[L.piv], L.L
+pivot(F::HemiCholeskyPivot, b) = b[F.piv], F.F
 
 ipivot(L, b) = b
-ipivot(L::HemiCholeskyPivot, b) = invpermute!(copy(b), L.piv)
+ipivot(F::HemiCholeskyPivot, b) = invpermute!(copy(b), F.piv)
 
 issingular(x::PureHemi) = x.n == 0
 
-function nzerodiags(L::HemiCholesky)
+function nzerodiags(F::HemiCholesky)
     ns = 0
-    for i = 1:size(L,1)
-        ns += issingular(L.L[i,i])
+    for i = 1:size(F,1)
+        ns += issingular(F.L[i,i])
     end
     ns
 end
-function nzerodiags(L::HemiCholeskyReal)
+function nzerodiags(F::HemiCholeskyReal)
     ns = 0
-    for d in L.d
+    for d in F.d
         ns += d == 0
     end
     ns
 end
-nzerodiags(L::HemiCholeskyPivot) = nzerodiags(L.L)
-nzerodiags(L::HemiCholeskyXY) = size(L.X, 2)
+nzerodiags(F::HemiCholeskyPivot) = nzerodiags(F.F)
+nzerodiags(F::HemiCholeskyXY) = size(F.X, 2)
 
-function singular_diagonals(L)
+function singular_diagonals(F)
     indxsing = Int[]
-    for i = 1:size(L,1)
-        if issingular(L.L[i,i])
+    for i = 1:size(F,1)
+        if issingular(F.L[i,i])
             push!(indxsing, i)
         end
     end
     indxsing
 end
-singular_diagonals(L::HemiCholeskyReal) = findall(==(0), L.d)
+singular_diagonals(F::HemiCholeskyReal) = findall(==(0), F.d)
 
 floattype(::Type{T}) where {T<:AbstractFloat} = T
 floattype(::Type{T}) where {T<:Integer} = Float64
@@ -814,9 +842,9 @@ const cachesize = 2^15
 
 default_δ(A) = 10 * size(A, 1) * eps(floattype(real(eltype(A))))
 default_tol(A) = default_δ(A) * maximum(abs, A)
-function default_tol(L::HemiCholeskyReal)
-    K = size(L, 1)
-    Lreal = L.Lreal
+function default_tol(F::HemiCholeskyReal)
+    K = size(F, 1)
+    Lreal = F.Lreal
     δ = default_δ(Lreal)
     K == 0 && return δ
     ma = zero(eltype(Lreal))
@@ -827,7 +855,7 @@ function default_tol(L::HemiCholeskyReal)
     end
     δ * ma
 end
-default_tol(L::HemiCholeskyPivot) = default_tol(L.L)
+default_tol(F::HemiCholeskyPivot) = default_tol(F.F)
 default_blocksize(::Type{T}) where {T} = max(4, floor(Int, sqrt(cachesize/sizeof(T)/4)))
 
 ### Determinant
@@ -842,15 +870,14 @@ function LinearAlgebra.logabsdet(F::HemiCholeskyReal{T}) where T
     return (logabs, sign_det)
 end
 
-LinearAlgebra.logabsdet(F::HemiCholeskyPivot) = logabsdet(F.L)
-LinearAlgebra.logabsdet(F::HemiCholeskyXY) = logabsdet(F.L)
+LinearAlgebra.logabsdet(F::Union{HemiCholeskyPivot,HemiCholeskyXY}) = logabsdet(F.F)
 
 function LinearAlgebra.logdet(F::HemiCholeskyReal)
     logabs, sign = logabsdet(F)
     sign > 0 || throw(DomainError(F, "logdet requires a positive-definite matrix"))
     return logabs
 end
-LinearAlgebra.logdet(F::Union{HemiCholeskyPivot, HemiCholeskyXY}) = logdet(F.L)
+LinearAlgebra.logdet(F::Union{HemiCholeskyPivot,HemiCholeskyXY}) = logdet(F.F)
 
 function LinearAlgebra.det(F::AbstractHemiCholesky)
     logabs, sign = logabsdet(F)
