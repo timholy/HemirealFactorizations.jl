@@ -119,7 +119,7 @@ function LinearAlgebra.cholesky(::Type{PureHemi{T}}, A::SparseMatrixCSC; tol=def
         # w[i] for every i ≥ j that has a nonzero in column k of L.
         for k in row_preds[j]
             dk = d[k]
-            dk == 0 && continue          # singular column: contribution is zero
+            dk == 0 && continue          # zero-pivot column
 
             # Locate row j inside the sorted column k of L (guaranteed to exist).
             pos = searchsortedfirst(L_rows[k], j)
@@ -141,7 +141,7 @@ function LinearAlgebra.cholesky(::Type{PureHemi{T}}, A::SparseMatrixCSC; tol=def
 
         if abs(Ajj) <= tol
             d[j] = 0
-            # For a singular column the rank-1 update to future columns is zero
+            # For a zero-pivot column the rank-1 update to future columns is zero
             # (factor 2*d[j] = 0), so we do NOT add j to row_preds[i].
             # However, the off-diagonal entries are still needed by forward/backward
             # substitution: _getL returns PureHemi(0, L[i,j]) for d[j]=0, i>j.

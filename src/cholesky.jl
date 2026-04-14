@@ -46,25 +46,28 @@ end
 """
     HemiCholeskyReal{T<:Real, S<:AbstractMatrix{T}} <: AbstractHemiCholesky{T}
 
-Matrix factorization type for the hemireal Cholesky factorization of a real symmetric matrix
-`A`, using a compact real-number encoding of the lower-triangular [`PureHemi`](@ref) factor.
-This is the return type of [`cholesky`](@ref) and [`cholesky!`](@ref) for real input matrices.
+Matrix factorization type for the hemireal Cholesky factorization of a real
+symmetric matrix `A`, using a compact real-number encoding of the
+lower-triangular [`PureHemi`](@ref) factor. This is the return type of
+[`cholesky`](@ref) and [`cholesky!`](@ref) for real input matrices.
 
-The factorization computes a lower-triangular hemireal matrix `L_h` satisfying `A = L_h * L_h'`.
-The ν-components of `L_h` are stored compactly in the internal real matrix `F.Lreal`, and the
-sign of each diagonal entry is stored as `Int8` in `F.d` (values in `{-1, 0, 1}`). The `(i,j)`
-entry of `L_h` for `i ≥ j` is `PureHemi(F.d[j]*F.Lreal[i,j], F.Lreal[i,j])`.
+The factorization computes a lower-triangular hemireal matrix `L_h` satisfying
+`A = L_h * L_h'`. The ν-components of `L_h` are stored compactly in the internal
+real matrix `F.Lreal`, and the sign of each diagonal entry is stored as `Int8`
+in `F.d` (values in `{-1, 0, 1}`). The `(i,j)` entry of `L_h` for `i ≥ j` is
+`PureHemi(F.d[j]*F.Lreal[i,j], F.Lreal[i,j])`.
 
-The full lower-triangular [`PureHemi`](@ref) factor is accessible as `F.L`, and its transpose
-as `F.U = F.L'` (the upper-triangular factor). A zero in `F.d` indicates a singular direction.
+The full lower-triangular [`PureHemi`](@ref) factor is accessible as `F.L`, and
+its transpose as `F.U = F.L'` (the upper-triangular factor). A zero in `F.d`
+indicates a zero pivot, which may or may not correspond to a singular direction.
 The original matrix is recovered by `Matrix(F)`, satisfying `Matrix(F) ≈ A`.
 
 Iterating the decomposition produces the components `L` and `U` in order.
 
 The following functions are available for `HemiCholeskyReal` objects:
-[`size`](@ref), [`\\`](@ref), [`ldiv!`](@ref), [`rdiv!`](@ref), [`Matrix`](@ref),
-[`det`](@ref), [`logdet`](@ref), [`logabsdet`](@ref), [`isposdef`](@ref),
-[`issuccess`](@ref), [`rank`](@ref), [`nullsolver`](@ref).
+[`size`](@ref), [`\\`](@ref), [`ldiv!`](@ref), [`rdiv!`](@ref),
+[`Matrix`](@ref), [`det`](@ref), [`logdet`](@ref), [`logabsdet`](@ref),
+[`isposdef`](@ref), [`issuccess`](@ref), [`rank`](@ref), [`nullsolver`](@ref).
 """
 struct HemiCholeskyReal{T<:Real, S<:AbstractMatrix{T}} <: AbstractHemiCholesky{T}
     Lreal::S          # compact real encoding: ν-components of the PureHemi factor
@@ -124,7 +127,7 @@ HemiCholeskyXY(F::HemiCholeskyReal; tol=default_tol(F)) = nullsolver(F; tol=tol)
 
 Augment a hemireal Cholesky factorization `F` with zero-pivot handling,
 returning a [`HemiCholeskyXY`](@ref). This is needed for non-singular systems
-with zero pivots, but it also handles singular systems for which the result `Fs`
+with zero pivots, but it also handles singular systems in which case the result `Fs`
 satisfies `Fs \\ b ≈ svd(A) \\ b` (minimum-norm least-squares solution).
 
 The `tol` keyword controls the threshold for identifying null directions
@@ -152,7 +155,7 @@ julia> nullsolver(F) \\ [0.2, 0.3]
 ```
 """
 function nullsolver(F::Union{HemiCholeskyReal,HemiCholeskyPivot}; tol=default_tol(F))
-    X, Y, HF, Q, nullflag = solve_singularities(F; tol=tol)
+    X, Y, HF, Q, nullflag = solve_zeropivots(F; tol=tol)
     HemiCholeskyXY{eltype(X), typeof(F), typeof(HF)}(F, X, Y, HF, Q, nullflag)
 end
 
@@ -332,7 +335,7 @@ step) and the result is a [`HemiCholeskyPivot`](@ref) with the permutation acces
 
 ## Keyword arguments
 - `tol`: diagonal entries (after partial elimination) with absolute value `≤ tol` are treated as
-  zero (singular). Defaults to a scale-adaptive multiple of machine epsilon.
+  zero. Defaults to a scale-adaptive multiple of machine epsilon.
 - `blocksize`: block size for the cache-efficient blocked algorithm (dense matrices only).
 
 See also [`cholesky!`](@ref), [`HemiCholeskyReal`](@ref), [`HemiCholeskyPivot`](@ref),
@@ -576,7 +579,7 @@ end
 
 ### Solving linear systems
 
-function solve_singularities(L; tol=default_tol(L))
+function solve_zeropivots(L; tol=default_tol(L))
     ns = nzerodiags(L)
     K = size(L, 1)
     T = real(eltype(L))
@@ -591,7 +594,7 @@ function solve_singularities(L; tol=default_tol(L))
     nullflag = dropdims(Hmax; dims=2) .< tol
     # Find an orthonormal basis for the null space
     if sum(nullflag) == 0
-        Q = Matrix{T}(undef, K, 0)
+        Q = Matrix{T}(undef, K, 0)   # this has no null space, they are all ordinary zero pivots
     else
         Q, _ = qr(X[:,nullflag])
     end
@@ -599,7 +602,7 @@ function solve_singularities(L; tol=default_tol(L))
     HF = lu!(H[.!nullflag, .!nullflag])
     X, Y, HF, Q, nullflag
 end
-solve_singularities(F::HemiCholeskyPivot; tol=default_tol(F)) = solve_singularities(F.F; tol=tol)
+solve_zeropivots(F::HemiCholeskyPivot; tol=default_tol(F)) = solve_zeropivots(F.F; tol=tol)
 
 function LinearAlgebra.ldiv!(F::HemiCholeskyReal{T}, b::AbstractVector; forcenull::Bool=false) where T
     K = length(b)
@@ -702,7 +705,7 @@ function forwardsubst!(Y, L::AbstractHemiCholesky)
     T = real(eltype(Y))
     fill!(Y, zero(eltype(Y)))
     gα = Vector{T}(undef, ns)   # α-coefficient on current row
-    si = 0              # number of singular columns processed so far
+    si = 0              # number of zero-pivot columns processed so far
     for i = 1:K
         for jj = 1:si
             gα[jj] = 0
@@ -714,11 +717,11 @@ function forwardsubst!(Y, L::AbstractHemiCholesky)
             end
         end
         Lii = _getL(L, i, i)
-        if issingular(Lii)
+        if iszeropiv(Lii)
             for jj = 1:si
                 Y[i,jj] = PureHemi{T}(0, -gα[jj]/Lii.m)
             end
-            # Add a new singular column
+            # Add a new zero-pivot column
             si += 1
             Y[i,si] = PureHemi{T}(1, 0)
         else
@@ -741,7 +744,7 @@ function forwardsubst!(ytilde::AbstractVector, L::AbstractHemiCholesky, b::Abstr
             g -= Lij*ytilde[j]
         end
         Lii = _getL(L, i, i)
-        if issingular(Lii)
+        if iszeropiv(Lii)
             ytilde[i] = PureHemi{T}(0, -g/Lii.m)
         else
             ytilde[i] = g/Lii
@@ -755,7 +758,7 @@ function backwardsubst!(X, H, L::AbstractHemiCholesky, Y)
     size(X, 1) == K && size(X, 2) == nc || throw(DimensionMismatch("Sizes $(size(X)) and $(size(Y)) of X and Y must match"))
     T = real(eltype(Y))
     h = Vector{PureHemi{T}}(undef, nc)  # the current row
-    si = ns = size(H, 1)        # number of singular diagonals
+    si = ns = size(H, 1)        # number of zero pivots
     for i = K:-1:1
         for jj = 1:nc
             h[jj] = -Y[i,jj]   # - from conjugation (we're solving L'X = Y)
@@ -767,7 +770,7 @@ function backwardsubst!(X, H, L::AbstractHemiCholesky, Y)
             end
         end
         Lii = _getL(L, i, i)
-        if issingular(Lii)
+        if iszeropiv(Lii)
             for jj = 1:nc
                 hjj = h[jj]
                 X[i,jj] = hjj.m
@@ -805,12 +808,12 @@ pivot(F::HemiCholeskyPivot, b) = b[F.piv], F.F
 ipivot(L, b) = b
 ipivot(F::HemiCholeskyPivot, b) = invpermute!(copy(b), F.piv)
 
-issingular(x::PureHemi) = x.n == 0
+iszeropiv(x::PureHemi) = x.n == 0
 
 function nzerodiags(F::HemiCholesky)
     ns = 0
     for i = 1:size(F,1)
-        ns += issingular(F.L[i,i])
+        ns += iszeropiv(F.L[i,i])
     end
     ns
 end
@@ -827,7 +830,7 @@ nzerodiags(F::HemiCholeskyXY) = size(F.X, 2)
 function singular_diagonals(F)
     indxsing = Int[]
     for i = 1:size(F,1)
-        if issingular(F.L[i,i])
+        if iszeropiv(F.L[i,i])
             push!(indxsing, i)
         end
     end

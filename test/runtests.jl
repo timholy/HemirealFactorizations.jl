@@ -73,7 +73,7 @@ for (label, makeA) in [("dense", A -> A), ("sparse", A -> sparse(tril(A)))]
     # issuccess: always true regardless of definiteness
     @test issuccess(cholesky(PureHemi, makeA([2.0 1; 1 3])))
     @test issuccess(cholesky(PureHemi, makeA([-1.0 0; 0 1])))   # indefinite
-    @test issuccess(cholesky(PureHemi, makeA([0.0 1; 1 0])))    # singular diagonal
+    @test issuccess(cholesky(PureHemi, makeA([0.0 1; 1 0])))    # zero-pivot diagonal
 
     # Iteration: L, U = F yields the lower- and upper-triangular PureHemi factors
     let A = [2.0 1; 1 3]
@@ -282,13 +282,19 @@ end
 
     # isposdef: true only for positive-definite matrices
     let A = (X = rand(4, 4); X'*X + I)
-        @test isposdef(cholesky(PureHemi, makeA(A)))
+        F = cholesky(PureHemi, makeA(A))
+        @test isposdef(F)
+        @test isposdef(nullsolver(F))
     end
-    let A = [-1.0 0; 0 1]
-        @test !isposdef(cholesky(PureHemi, makeA(A)))  # indefinite
+    let A = [-1.0 0; 0 1]  # indefinite
+        F = cholesky(PureHemi, makeA(A))
+        @test !isposdef(F)
+        @test !isposdef(nullsolver(F))
     end
-    let A = [0.0 1; 1 0]
-        @test !isposdef(cholesky(PureHemi, makeA(A)))  # zero diagonal → singular
+    let A = [0.0 1; 1 0]   # also indefinite
+        F = cholesky(PureHemi, makeA(A))
+        @test !isposdef(F)
+        @test !isposdef(nullsolver(F))
     end
 
     # copy: produces an independent equal copy
