@@ -180,14 +180,18 @@ let A = [2.0 1; 1 2]
     @test F \ b ≈ A \ b
 end
 
-# Diagonal-zeros case: isposdef false and \ throws without forcenull
+# Diagonal-zeros case: isposdef false and \ throws without nullsolver
 let A = [0.0 1; 1 0]
     F_real = cholesky(PureHemi, A)
     L, U = F_real
     F = HemiCholesky(L)
     @test !isposdef(F)
     b = rand(2)
-    @test_throws ErrorException F \ b
+    @test_throws "There were zero diagonals" F \ b
+    @test nullsolver(F_real) \ b ≈ A \ b
+    Fpiv = cholesky(PureHemi, A, RowMaximum())
+    @test_throws "There were zero diagonals" Fpiv \ b
+    @test nullsolver(Fpiv) \ b ≈ A \ b
 end
 
 # show for HemiCholeskyXY
@@ -311,6 +315,10 @@ end
         G = cholesky(PureHemi, makeA(A))
         @test F == G
         @test cholesky(PureHemi, makeA(A)) != cholesky(PureHemi, makeA(A + I))
+        A1 = A + Diagonal(1e-10*rand(4))  # same sparsity pattern, different values
+        G = cholesky(PureHemi, makeA(A1))
+        @test F != G
+        @test F ≈ G
     end
 end # @testset "$label"
 

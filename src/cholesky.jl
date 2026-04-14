@@ -827,17 +827,6 @@ end
 nzerodiags(F::HemiCholeskyPivot) = nzerodiags(F.F)
 nzerodiags(F::HemiCholeskyXY) = size(F.X, 2)
 
-function singular_diagonals(F)
-    indxsing = Int[]
-    for i = 1:size(F,1)
-        if iszeropiv(F.L[i,i])
-            push!(indxsing, i)
-        end
-    end
-    indxsing
-end
-singular_diagonals(F::HemiCholeskyReal) = findall(==(0), F.d)
-
 floattype(::Type{T}) where {T<:AbstractFloat} = T
 floattype(::Type{T}) where {T<:Integer} = Float64
 
