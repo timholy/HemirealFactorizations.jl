@@ -31,10 +31,6 @@ If `A` is singular, this should be the least-squares solution.
 You can compute `F*F'` or say `rank(F)`.  You can also convert `F`
 into matrix form with `convert(Matrix, F)`.
 
-To support all operations, you need to be running at least a version
-of julia-0.5-dev that is current with master as of 2015-12-11.
-However, many operations also work on julia-0.4.
-
 ## Options
 
 ```jl
