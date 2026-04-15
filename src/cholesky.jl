@@ -120,7 +120,7 @@ struct HemiCholeskyXY{T<:Real,Ftype<:AbstractHemiCholesky,Htype} <: AbstractHemi
     Q::Matrix{T}
     nullflag::BitVector
 end
-HemiCholeskyXY(F::HemiCholeskyReal; tol=default_tol(F)) = nullsolver(F; tol=tol)
+HemiCholeskyXY(F::HemiCholeskyReal; tol=default_tol(F)) = nullsolver(F; tol)
 
 """
     nullsolver(F::Union{HemiCholeskyReal, HemiCholeskyPivot, SparseHemiCholeskyReal}; tol) -> HemiCholeskyXY
@@ -155,7 +155,7 @@ julia> nullsolver(F) \\ [0.2, 0.3]
 ```
 """
 function nullsolver(F::Union{HemiCholeskyReal,HemiCholeskyPivot}; tol=default_tol(F))
-    X, Y, HF, Q, nullflag = solve_zeropivots(F; tol=tol)
+    X, Y, HF, Q, nullflag = solve_zeropivots(F; tol)
     HemiCholeskyXY{eltype(X), typeof(F), typeof(HF)}(F, X, Y, HF, Q, nullflag)
 end
 
@@ -345,9 +345,10 @@ function LinearAlgebra.cholesky(::Type{PureHemi{T}}, A::AbstractMatrix, pivot::U
     size(A, 1) == size(A, 2) || throw(DimensionMismatch("A must be square"))
     A0 = Matrix{floattype(T)}(undef, size(A))
     copy!(A0, A)
-    cholesky!(PureHemi{T}, A0, pivot; tol=tol, blocksize=blocksize)
+    cholesky!(PureHemi{T}, A0, pivot; tol, blocksize=blocksize)
 end
-LinearAlgebra.cholesky(::Type{PureHemi}, A::AbstractMatrix, pivot::Union{NoPivot,RowMaximum}=NoPivot(); tol=default_tol(A), blocksize=default_blocksize(floattype(eltype(A)))) = cholesky(PureHemi{floattype(eltype(A))}, A, pivot; tol=tol, blocksize=blocksize)
+LinearAlgebra.cholesky(::Type{PureHemi}, A::AbstractMatrix, pivot::Union{NoPivot,RowMaximum}=NoPivot(); tol=default_tol(A), blocksize=default_blocksize(floattype(eltype(A)))) =
+    cholesky(PureHemi{floattype(eltype(A))}, A, pivot; tol, blocksize=blocksize)
 
 """
     cholesky!(PureHemi{T}, A, pivot=NoPivot(); tol, blocksize) -> HemiCholeskyReal or HemiCholeskyPivot
@@ -408,7 +409,7 @@ end
 
 
 LinearAlgebra.cholesky!(::Type{PureHemi}, A::AbstractMatrix{T}, pivot::Union{NoPivot,RowMaximum}=NoPivot(); tol=default_tol(A), blocksize=default_blocksize(T)) where {T<:AbstractFloat} =
-    cholesky!(PureHemi{T}, A, pivot; tol=tol, blocksize=blocksize)
+    cholesky!(PureHemi{T}, A, pivot; tol, blocksize=blocksize)
 
 
 function solve_diagonal!(B, d, tol)
@@ -579,16 +580,16 @@ end
 
 ### Solving linear systems
 
-function solve_zeropivots(L; tol=default_tol(L))
-    ns = nzerodiags(L)
-    K = size(L, 1)
-    T = real(eltype(L))
+function solve_zeropivots(F; tol=default_tol(F))
+    ns = nzerodiags(F)
+    K = size(F, 1)
+    T = real(eltype(F))
     X = Matrix{T}(undef, K, ns)
     H = Matrix{T}(undef, ns, ns)
     Y = Matrix{PureHemi{T}}(undef, K, ns)
     ns == 0 && return X, Y, lu!(H), Matrix{T}(undef, K, 0), falses(0)
-    forwardsubst!(Y, L)
-    backwardsubst!(X, H, L, Y)
+    forwardsubst!(Y, F)
+    backwardsubst!(X, H, F, Y)
     # Find the columns of X in the null space
     Hmax = maximum(abs, H; dims=2)
     nullflag = dropdims(Hmax; dims=2) .< tol
@@ -602,7 +603,7 @@ function solve_zeropivots(L; tol=default_tol(L))
     HF = lu!(H[.!nullflag, .!nullflag])
     X, Y, HF, Q, nullflag
 end
-solve_zeropivots(F::HemiCholeskyPivot; tol=default_tol(F)) = solve_zeropivots(F.F; tol=tol)
+solve_zeropivots(F::HemiCholeskyPivot; tol=default_tol(F)) = solve_zeropivots(F.F; tol)
 
 function LinearAlgebra.ldiv!(F::HemiCholeskyReal{T}, b::AbstractVector; forcenull::Bool=false) where T
     K = length(b)

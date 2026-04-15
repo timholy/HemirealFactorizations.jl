@@ -210,7 +210,7 @@ LinearAlgebra.cholesky(::Type{PureHemi}, A::SparseMatrixCSC; kwargs...) =
 ### Solve and nullspace
 
 function nullsolver(F::SparseHemiCholeskyReal; tol=default_tol(F))
-    X, Y, HF, Q, nullflag = solve_zeropivots(F; tol=tol)
+    X, Y, HF, Q, nullflag = solve_zeropivots(F; tol)
     HemiCholeskyXY{eltype(F.Lreal), typeof(F), typeof(HF)}(F, X, Y, HF, Q, nullflag)
 end
 
