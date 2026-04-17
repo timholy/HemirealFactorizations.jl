@@ -238,6 +238,7 @@ end
 function _getL(F::HemiCholesky{T}, i::Integer, j::Integer) where T
     i >= j ? F.L[i,j] : zero(PureHemi{T})
 end
+_getL(L::LowerTriangular{PureHemi{T}}, i::Integer, j::Integer) where T = L[i,j]
 
 hrmatrix(::Type{T}, F::HemiCholesky) where T = convert(Matrix{PureHemi{T}}, F.L)
 function hrmatrix(::Type{T}, F::HemiCholeskyReal) where T
@@ -251,7 +252,7 @@ function hrmatrix(::Type{T}, F::HemiCholeskyReal) where T
             L[i,j] = _getL(F, i, j)
         end
     end
-    L
+    return LowerTriangular(L)
 end
 hrmatrix(::Type{T}, F::HemiCholeskyPivot) where T = hrmatrix(T, F.F)
 hrmatrix(::Type{T}, F::HemiCholeskyXY) where T = hrmatrix(T, F.F)
@@ -577,6 +578,48 @@ function update_columns!(dest, d::AbstractVector, C::AbstractMatrix)
     dest
 end
 
+### Multiplication
+
+function LinearAlgebra.mul!(out::AbstractVector{<:Real}, L::LowerTriangular{<:PureHemi}, y::AbstractVector{<:PureHemi})
+    size(L, 2) == length(y) || throw(DimensionMismatch("length of y must match the number of columns of L"))
+    size(L, 1) == length(out) || throw(DimensionMismatch("length of output must match the number of rows of L"))
+    for i in 1:size(L, 1)
+        s = zero(eltype(out))
+        for j in 1:i
+            s += L[i,j] * y[j]
+        end
+        out[i] = s
+    end
+    out
+end
+
+function LinearAlgebra.mul!(out::AbstractVector{<:PureHemi}, U::UpperTriangular{<:PureHemi}, x::AbstractVector{<:Real})
+    size(U, 2) == length(x) || throw(DimensionMismatch("length of x must match the number of columns of U"))
+    size(U, 1) == length(out) || throw(DimensionMismatch("length of output must match the number of rows of U"))
+    for i in size(U, 1):-1:1
+        s = zero(eltype(out))
+        for j in i:size(U, 2)
+            s += U[i,j] * x[j]
+        end
+        out[i] = s
+    end
+    out
+end
+
+function LinearAlgebra.mul!(out::AbstractMatrix{<:Real}, L::LowerTriangular{<:PureHemi}, U::UpperTriangular{<:PureHemi})
+    size(out) == (size(L, 1), size(U, 2)) || throw(DimensionMismatch("output size must match the product of L and U"))
+    size(L, 2) == size(U, 1) || throw(DimensionMismatch("inner dimensions of L and U must match"))
+    for i in 1:size(L, 1)
+        for j in 1:size(U, 2)
+            s = zero(eltype(out))
+            for k in 1:size(L, 2)
+                s += L[i,k] * U[k,j]
+            end
+            out[i,j] = s
+        end
+    end
+    out
+end
 
 ### Solving linear systems
 
@@ -734,7 +777,7 @@ function forwardsubst!(Y, L::AbstractHemiCholesky)
     Y
 end
 
-function forwardsubst!(ytilde::AbstractVector, L::AbstractHemiCholesky, b::AbstractVector)
+function forwardsubst!(ytilde::AbstractVector, L::Union{AbstractHemiCholesky, LowerTriangular{<:PureHemi}}, b::AbstractVector)
     K = length(ytilde)
     length(b) == size(L, 1) == K || throw(DimensionMismatch("Sizes $(size(ytilde)), $(size(L)), and $(size(b)) do not match"))
     T = real(eltype(ytilde))
@@ -754,7 +797,7 @@ function forwardsubst!(ytilde::AbstractVector, L::AbstractHemiCholesky, b::Abstr
     ytilde
 end
 
-function backwardsubst!(X, H, L::AbstractHemiCholesky, Y)
+function backwardsubst!(X, H, L::Union{AbstractHemiCholesky, LowerTriangular{<:PureHemi}}, Y)
     K, nc = size(Y, 1), size(Y, 2)
     size(X, 1) == K && size(X, 2) == nc || throw(DimensionMismatch("Sizes $(size(X)) and $(size(Y)) of X and Y must match"))
     T = real(eltype(Y))

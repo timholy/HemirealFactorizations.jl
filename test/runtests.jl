@@ -27,7 +27,7 @@ let A = [0  1 -1;
          1  8 12;
         -1 12 20]
     F = cholesky(PureHemi, A)
-    @test sprint(show, MIME("text/plain"), F) == "3×3 HemiCholeskyReal{Float64, Matrix{Float64}}:\n  1.0μ + 0.0ν  0.0μ + 0.0ν  0.0μ + 0.0ν\n  0.0μ + 1.0ν  2.0μ + 2.0ν  0.0μ + 0.0ν\n -0.0μ - 1.0ν  3.0μ + 3.0ν  1.0μ + 1.0ν"
+    @test sprint(show, MIME("text/plain"), F) == "3×3 HemiCholeskyReal{Float64, Matrix{Float64}}:\n  1.0μ + 0.0ν       ⋅            ⋅     \n  0.0μ + 1.0ν  2.0μ + 2.0ν       ⋅     \n -0.0μ - 1.0ν  3.0μ + 3.0ν  1.0μ + 1.0ν"
     @test Matrix(F) ≈ [0 1 -1; 1 8 12; -1 12 20]
 end
 
@@ -75,22 +75,29 @@ for (label, makeA) in [("dense", A -> A), ("sparse", A -> sparse(tril(A)))]
     @test issuccess(cholesky(PureHemi, makeA([-1.0 0; 0 1])))   # indefinite
     @test issuccess(cholesky(PureHemi, makeA([0.0 1; 1 0])))    # zero-pivot diagonal
 
-    # Iteration: L, U = F yields the lower- and upper-triangular PureHemi factors
     let A = [2.0 1; 1 3]
+        # Iteration: L, U = F yields the lower- and upper-triangular PureHemi factors
         F = cholesky(PureHemi, makeA(A))
         L, U = F
-        @test L isa Matrix{<:PureHemi}
+        @test L isa Union{Matrix{<:PureHemi}, LowerTriangular{<:PureHemi}}
         @test L * L' ≈ A
         @test L * U ≈ A
-    end
-
-    # .U property and propertynames (:L, :U, :d)
-    let F = cholesky(PureHemi, makeA([2.0 1; 1 3]))
-        L, U = F
+        # .L and .U property and propertynames (:L, :U, :d)
+        @test F.L == L
         @test F.U == U
         @test :L ∈ propertynames(F)
         @test :U ∈ propertynames(F)
         @test :d ∈ propertynames(F)
+        # Direct forward and backward substitution with \
+        b = [0.2, -0.7]
+        y = L \ b
+        @test eltype(y) === PureHemi{Float64}
+        @test L * y ≈ b
+        x = U \ y
+        @test eltype(x) === Float64
+        @test U * x ≈ y
+        @test x ≈ A \ b
+        @test L*U ≈ A
     end
 
     # rdiv!: (B / A) * A ≈ B
