@@ -32,7 +32,7 @@ jobs:
       - uses: julia-actions/setup-julia@v3
         with:
           version: ${{ matrix.version }}
-      - uses: julia-actions/cache@v4
+      - uses: julia-actions/cache@v3
       - name: Build package manually
         run: |
           using Pkg
