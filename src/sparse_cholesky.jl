@@ -117,7 +117,7 @@ function LinearAlgebra.cholesky(::Type{PureHemi{T}}, A::SparseMatrixCSC; tol=def
         end
 
         # ── Step 2: left-looking update from columns k < j ───────────────────
-        # For each k < j with L[j,k] ≠ 0, subtract 2·d[k]·L[j,k]·L[i,k] from
+        # For each k < j with L[j,k] ≠ 0, subtract d[k]·L[j,k]·L[i,k] from
         # w[i] for every i ≥ j that has a nonzero in column k of L.
         for k in row_preds[j]
             dk = d[k]
@@ -126,7 +126,7 @@ function LinearAlgebra.cholesky(::Type{PureHemi{T}}, A::SparseMatrixCSC; tol=def
             # Locate row j inside the sorted column k of L (guaranteed to exist).
             pos = searchsortedfirst(L_rows[k], j)
             Ljk = L_vals[k][pos]
-            c   = 2 * dk * Ljk           # scalar that multiplies each L[i,k]
+            c   = dk * Ljk               # scalar that multiplies each L[i,k]
 
             for ptr in pos:length(L_rows[k])
                 i = L_rows[k][ptr]
@@ -144,21 +144,22 @@ function LinearAlgebra.cholesky(::Type{PureHemi{T}}, A::SparseMatrixCSC; tol=def
         if abs(Ajj) <= tol
             d[j] = 0
             # For a zero-pivot column the rank-1 update to future columns is zero
-            # (factor 2*d[j] = 0), so we do NOT add j to row_preds[i].
+            # (factor d[j] = 0), so we do NOT add j to row_preds[i].
             # However, the off-diagonal entries are still needed by forward/backward
-            # substitution: _getL returns PureHemi(0, L[i,j]) for d[j]=0, i>j.
+            # substitution: _getL returns PureHemi(0, L[i,j]) for d[j]=0, i>j. They
+            # pair with the μ diagonal (μ*ν = -1/2), so they are doubled here.
             for i in w_nnz
                 i <= j && continue
                 vi = w[i]
                 iszero(vi) && continue
                 push!(L_rows[j], i)
-                push!(L_vals[j], vi)
+                push!(L_vals[j], 2*vi)
             end
         else
             dj  = Int8(sign(Ajj))
             d[j] = dj
-            Ljj  = sqrt(abs(Ajj) / 2)      # ν component of the diagonal entry
-            f    = dj / (2 * Ljj)           # = sign(Ajj)/sqrt(2|Ajj|)
+            Ljj  = sqrt(abs(Ajj))          # ν component of the diagonal entry
+            f    = dj / Ljj                # = sign(Ajj)/sqrt(|Ajj|)
 
             push!(L_rows[j], j)
             push!(L_vals[j], Ljj)

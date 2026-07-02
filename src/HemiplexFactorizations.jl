@@ -1,7 +1,7 @@
-module HemirealFactorizations
+module HemiplexFactorizations
 
 using LinearAlgebra
-using HemirealNumbers
+using HemiplexNumbers
 using SparseArrays
 
 export nullsolver
@@ -17,4 +17,4 @@ include("sparse_cholesky.jl")
 (\)(L::LowerTriangular{PureHemi{T}, <:AbstractMatrix{PureHemi{T}}}, b::AbstractVector) where T = forwardsubst!(similar(b, PureHemi{T}), L, b)
 (\)(U::UpperTriangular{PureHemi{T}, <:Adjoint{PureHemi{T}, <:AbstractMatrix{PureHemi{T}}}}, y::AbstractVector{<:PureHemi}) where T = backwardsubst!(similar(y, T), Matrix{T}(undef, 0, 0), U', y)
 
-end # module
+end # module HemiplexFactorizations
