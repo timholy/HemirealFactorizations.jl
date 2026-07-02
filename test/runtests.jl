@@ -1,11 +1,11 @@
-using HemirealNumbers, HemirealFactorizations
+using HemiplexNumbers, HemiplexFactorizations
 using LinearAlgebra
 using SparseArrays
 using Test
 using Combinatorics
 using DoubleFloats: Double64
 
-@testset "Hemireal Cholesky factorization" begin
+@testset "Hemiplex Cholesky factorization" begin
 
 # ── Dense-only: exact output, pivoting variants, blocked algorithm, in-place ──
 
@@ -24,11 +24,11 @@ end
 
 # Dense-only: show output
 let A = [0  1 -1;
-         1  8 12;
-        -1 12 20]
+         1  4  6;
+        -1  6 10]
     F = cholesky(PureHemi, A)
-    @test sprint(show, MIME("text/plain"), F) == "3×3 HemiCholeskyReal{Float64, Matrix{Float64}}:\n  1.0μ + 0.0ν       ⋅            ⋅     \n  0.0μ + 1.0ν  2.0μ + 2.0ν       ⋅     \n -0.0μ - 1.0ν  3.0μ + 3.0ν  1.0μ + 1.0ν"
-    @test Matrix(F) ≈ [0 1 -1; 1 8 12; -1 12 20]
+    @test sprint(show, MIME("text/plain"), F) == "3×3 HemiCholeskyReal{Float64, Matrix{Float64}}:\n  1.0μ + 0.0ν       ⋅            ⋅     \n  0.0μ + 2.0ν  2.0μ + 2.0ν       ⋅     \n -0.0μ - 2.0ν  3.0μ + 3.0ν  1.0μ + 1.0ν"
+    @test Matrix(F) ≈ [0 1 -1; 1 4 6; -1 6 10]
 end
 
 # Dense-only: blocked pivoting
@@ -480,4 +480,4 @@ end
     end
 end
 
-end # @testset "Hemireal Cholesky factorization"
+end # @testset "Hemiplex Cholesky factorization"

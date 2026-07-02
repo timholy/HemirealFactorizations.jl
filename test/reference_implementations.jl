@@ -1,7 +1,7 @@
-using HemirealNumbers
-using HemirealFactorizations
+using HemiplexNumbers
+using HemiplexFactorizations
 
-struct HemiCholeskyRealRef{T} <: HemirealFactorizations.AbstractHemiCholesky{T}
+struct HemiCholeskyRealRef{T} <: HemiplexFactorizations.AbstractHemiCholesky{T}
     Lreal::Matrix{T}
     r::Vector{T}
 end
@@ -22,13 +22,13 @@ function cholesky_reference(A::AbstractMatrix{<:Real})
             Aijmax = max(Aijmax, abs(A[i,j]))
         end
         r[j] = rj = sign(Ajj) * min(abs(Ajj) / Aijmax, 1)
-        L[j,j] = sqrt(Ajj / (2 * rj))   # ν component
+        L[j,j] = sqrt(Ajj / rj)   # ν component
         for i in j+1:n
-            L[i,j] = A[i,j] / (2 * rj * L[j,j])  # μ component
+            L[i,j] = A[i,j] / (rj * L[j,j])  # μ component
         end
         for k in j+1:n
             for i in k:n
-                A[i,k] -= 2 * rj * L[i,j] * L[k,j]
+                A[i,k] -= rj * L[i,j] * L[k,j]
             end
         end
     end
@@ -54,4 +54,4 @@ function Base.getproperty(F::HemiCholeskyRealRef, sym::Symbol)
     end
 end
 
-HemirealFactorizations.hrmatrix(::Type{T}, F::HemiCholeskyRealRef{T}) where T = F.L
+HemiplexFactorizations.hrmatrix(::Type{T}, F::HemiCholeskyRealRef{T}) where T = F.L

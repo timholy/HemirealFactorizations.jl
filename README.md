@@ -1,11 +1,11 @@
-# HemirealFactorizations
+# HemiplexFactorizations
 
-[![CI](https://github.com/timholy/HemirealFactorizations.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/timholy/HemirealFactorizations.jl/actions/workflows/CI.yml)
-[![codecov](https://codecov.io/gh/timholy/HemirealFactorizations.jl/graph/badge.svg?token=ldfY1pgacu)](https://codecov.io/gh/timholy/HemirealFactorizations.jl)
+[![CI](https://github.com/timholy/HemiplexFactorizations.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/timholy/HemiplexFactorizations.jl/actions/workflows/CI.yml)
+[![codecov](https://codecov.io/gh/timholy/HemiplexFactorizations.jl/graph/badge.svg?token=ldfY1pgacu)](https://codecov.io/gh/timholy/HemiplexFactorizations.jl)
 
 # Introduction
 
-Cholesky factorizations over the hemireals can be computed for
+Cholesky factorizations over the hemiplex numbers can be computed for
 arbitrary symmetric matrices, including indefinite and singular
 matrices.  For singular matrices, the behavior is reminiscent of the
 singular value decomposition, but the performance is much better.
@@ -13,7 +13,7 @@ singular value decomposition, but the performance is much better.
 # Usage
 
 After creating a symmetric matrix `A`, compute its Cholesky
-factorization over the hemireal numbers like this:
+factorization over the hemiplex numbers like this:
 
 ```jl
 F = cholfact(PureHemi, A)

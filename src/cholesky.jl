@@ -7,11 +7,11 @@ using LinearAlgebra: BlasFloat
 """
     AbstractHemiCholesky{T<:Real} <: Factorization{PureHemi{T}}
 
-Abstract supertype for Cholesky factorizations of real symmetric matrices over the hemireal
-numbers. A hemireal Cholesky factorization of a real symmetric matrix `A` produces a
+Abstract supertype for Cholesky factorizations of real symmetric matrices over the hemiplex
+numbers. A hemiplex Cholesky factorization of a real symmetric matrix `A` produces a
 lower-triangular factor `L` with entries in [`PureHemi`](@ref) numbers such that `A = L * L'`.
 
-Unlike the standard Cholesky factorization, hemireal Cholesky factorizations exist for *all*
+Unlike the standard Cholesky factorization, hemiplex Cholesky factorizations exist for *all*
 real symmetric matrices: positive-definite, positive-semidefinite, indefinite, and singular.
 
 Subtypes: [`HemiCholesky`](@ref), [`HemiCholeskyReal`](@ref), [`HemiCholeskyPivot`](@ref),
@@ -24,7 +24,7 @@ abstract type AbstractHemiCholesky{T} <: Factorization{PureHemi{T}} end
 """
     HemiCholesky{T<:Real, S<:AbstractMatrix{PureHemi{T}}} <: AbstractHemiCholesky{T}
 
-Matrix factorization type for the hemireal Cholesky factorization of a real symmetric matrix,
+Matrix factorization type for the hemiplex Cholesky factorization of a real symmetric matrix,
 with the lower-triangular [`PureHemi`](@ref) factor stored directly as a matrix. This type is
 rarely constructed directly; [`HemiCholeskyReal`](@ref) is the standard result type for real
 inputs.
@@ -46,12 +46,12 @@ end
 """
     HemiCholeskyReal{T<:Real, S<:AbstractMatrix{T}} <: AbstractHemiCholesky{T}
 
-Matrix factorization type for the hemireal Cholesky factorization of a real
+Matrix factorization type for the hemiplex Cholesky factorization of a real
 symmetric matrix `A`, using a compact real-number encoding of the
 lower-triangular [`PureHemi`](@ref) factor. This is the return type of
 [`cholesky`](@ref) and [`cholesky!`](@ref) for real input matrices.
 
-The factorization computes a lower-triangular hemireal matrix `L_h` satisfying
+The factorization computes a lower-triangular hemiplex matrix `L_h` satisfying
 `A = L_h * L_h'`. The ν-components of `L_h` are stored compactly in the internal
 real matrix `F.Lreal`, and the sign of each diagonal entry is stored as `Int8`
 in `F.d` (values in `{-1, 0, 1}`). The `(i,j)` entry of `L_h` for `i ≥ j` is
@@ -77,7 +77,7 @@ end
 """
     HemiCholeskyPivot{T<:Real, S<:AbstractMatrix{T}} <: AbstractHemiCholesky{T}
 
-Matrix factorization type for the pivoted hemireal Cholesky factorization of a real symmetric
+Matrix factorization type for the pivoted hemiplex Cholesky factorization of a real symmetric
 matrix `A`. This is the return type of `cholesky(PureHemi, A, RowMaximum())`.
 
 Diagonal pivoting reorders rows and columns to improve numerical stability. The inner
@@ -104,7 +104,7 @@ end
 """
     HemiCholeskyXY{T<:Real, Ftype<:AbstractHemiCholesky, Htype} <: AbstractHemiCholesky{T}
 
-Extended hemireal Cholesky factorization that augments a
+Extended hemiplex Cholesky factorization that augments a
 [`HemiCholeskyReal`](@ref) or [`HemiCholeskyPivot`](@ref) with zero-pivot
 handling, enabling stable least-squares solutions. Obtained from
 [`nullsolver`](@ref).
@@ -125,7 +125,7 @@ HemiCholeskyXY(F::HemiCholeskyReal; tol=default_tol(F)) = nullsolver(F; tol)
 """
     nullsolver(F::Union{HemiCholeskyReal, HemiCholeskyPivot, SparseHemiCholeskyReal}; tol) -> HemiCholeskyXY
 
-Augment a hemireal Cholesky factorization `F` with zero-pivot handling,
+Augment a hemiplex Cholesky factorization `F` with zero-pivot handling,
 returning a [`HemiCholeskyXY`](@ref). This is needed for non-singular systems
 with zero pivots, but it also handles singular systems in which case the result `Fs`
 satisfies `Fs \\ b ≈ svd(A) \\ b` (minimum-norm least-squares solution).
@@ -141,7 +141,7 @@ julia> A = [0 1; 1 0];   # nonsingular but with zero pivots
 julia> F = cholesky(PureHemi, A)
 2×2 HemiCholeskyReal{Float64, Matrix{Float64}}:
  1.0μ + 0.0ν  0.0μ + 0.0ν
- 0.0μ + 1.0ν  1.0μ + 0.0ν
+ 0.0μ + 2.0ν  1.0μ + 0.0ν
 
 julia> F \\ [0.2, 0.3]
 ERROR: There were zero diagonals; use `nullsolver(F)\\b` or, if you're sure all zeros correspond to null directions, `(\\)(F, b, forcenull=true)`.
@@ -321,11 +321,11 @@ end
     cholesky(PureHemi{T}, A, pivot=NoPivot(); tol, blocksize) -> HemiCholeskyReal or HemiCholeskyPivot
     cholesky(PureHemi,    A, pivot=NoPivot(); tol, blocksize)
 
-Compute the hemireal Cholesky factorization of the real symmetric matrix `A` and return a
+Compute the hemiplex Cholesky factorization of the real symmetric matrix `A` and return a
 [`HemiCholeskyReal`](@ref) (unpivoted) or [`HemiCholeskyPivot`](@ref) (pivoted) factorization
 `F` satisfying `Matrix(F) ≈ A`.
 
-Unlike the standard [`cholesky`](@ref LinearAlgebra.cholesky), hemireal Cholesky factorizations
+Unlike the standard [`cholesky`](@ref LinearAlgebra.cholesky), hemiplex Cholesky factorizations
 exist for *all* real symmetric matrices, including indefinite and singular ones.
 
 The type parameter `T` controls the working precision; use `PureHemi{T}` to fix it or `PureHemi`
@@ -420,8 +420,8 @@ function solve_diagonal!(B, d, tol)
         if abs(Bjj) > tol
             # compute ℓ (as the jth column of B)
             d[j] = Int8(sign(Bjj))
-            s = sqrt(2*abs(Bjj))
-            B[j,j] = s/2
+            s = sqrt(abs(Bjj))
+            B[j,j] = s
             f = d[j]/s
             for i = j+1:K
                 B[i,j] *= f
@@ -431,7 +431,12 @@ function solve_diagonal!(B, d, tol)
         else
             d[j] = 0
             B[j,j] = 0
-            # ν^2 = 0, so this has no impact on the rest of the matrix
+            # ν^2 = 0, so this column has no impact on the rest of the matrix.
+            # The off-diagonal entries pair with the μ diagonal (μ*ν = -1/2), so
+            # they must be doubled to reconstruct A.
+            for i = j+1:K
+                B[i,j] *= 2
+            end
         end
     end
     B
@@ -461,21 +466,23 @@ function solve_columns_pivot!(A, d, piv, Ad, tol, jrange)
         Ajj = A[j,j]
         for k = jmin:j-1
             tmp = A[j,k]
-            Ajj -= 2*d[k]*tmp*tmp
+            Ajj -= d[k]*tmp*tmp
         end
         if abs(Ajj) > tol
             # compute ℓ (as the jth column of A)
             d[j] = Int8(sign(Ajj))
-            s = sqrt(2*abs(Ajj))
-            A[j,j] = s/2
+            s = sqrt(abs(Ajj))
+            A[j,j] = s
             f = d[j]/s
         else
             d[j] = 0
             A[j,j] = 0
-            f = one(eltype(A))
+            # ν^2 = 0, so the off-diagonal entries pair with the μ diagonal
+            # (μ*ν = -1/2) and must be doubled to reconstruct A.
+            f = 2*one(eltype(A))
         end
         for k = jmin:j-1
-            @inbounds ck = 2*d[k]*A[j,k]
+            @inbounds ck = d[k]*A[j,k]
             @simd for i = j+1:KA
                 @inbounds A[i,j] -= ck*A[i,k]
             end
@@ -485,7 +492,7 @@ function solve_columns_pivot!(A, d, piv, Ad, tol, jrange)
             @inbounds tmp = A[i,j]
             tmp *= f
             @inbounds A[i,j] = tmp
-            @inbounds Ad[i] -= 2*dj*tmp*tmp
+            @inbounds Ad[i] -= dj*tmp*tmp
         end
     end
     A
@@ -495,8 +502,15 @@ function solve_columns!(B21, d, B11)
     I, J = size(B21)
     for j = 1:J
         dj = d[j]
-        dj == 0 && continue
-        s = 2*B11[j,j]
+        if dj == 0
+            # ν^2 = 0, so this column does not update later ones; its off-diagonal
+            # entries pair with the μ diagonal (μ*ν = -1/2) and must be doubled.
+            for i = 1:I
+                B21[i,j] *= 2
+            end
+            continue
+        end
+        s = B11[j,j]
         f = dj/s
         for i = 1:I
             B21[i,j] *= f
@@ -508,12 +522,12 @@ end
 
 # Computes dest -= d*c*c', in the lower diagonal
 function update_columns!(dest::StridedMatrix{T}, d::Number, c::StridedVector{T}) where {T<:BlasFloat}
-    syr!('L', convert(T, -2*d), c, dest)
+    syr!('L', convert(T, -d), c, dest)
 end
 
 # Computes dest -= d*x*y'
 function update_columns!(dest::StridedMatrix{T}, d::Number, x::StridedVector{T}, y::StridedVector{T}) where {T<:BlasFloat}
-    ger!(convert(T, -2*d), x, y, dest)
+    ger!(convert(T, -d), x, y, dest)
 end
 
 # Computes dest -= C*diagm(d)*C', in the lower diagonal
@@ -527,10 +541,11 @@ function update_columns!(dest::StridedMatrix{T}, d::AbstractVector, C::StridedMa
     end
     allsame && d1 == 0 && return dest
     if allsame
-        syrk!('L', 'N', convert(T, -2*d1), C, one(T), dest)
+        syrk!('L', 'N', convert(T, -d1), C, one(T), dest)
     else
+        # syr2k forms C*Cd' + Cd*C' = 2*C*diagm(d)*C', so scale by 1/2
         Cd = C .* d'
-        syr2k!('L', 'N', -one(T), C, Cd, one(T), dest)
+        syr2k!('L', 'N', convert(T, -one(T)/2), C, Cd, one(T), dest)
     end
     dest
 end
@@ -540,7 +555,7 @@ end
 function update_columns!(dest, d::Number, c::AbstractVector)
     K = length(c)
     for j = 1:K
-        dcj = 2*d*c[j]
+        dcj = d*c[j]
         @simd for i = j:K
             @inbounds dest[i,j] -= dcj*c[i]
         end
@@ -552,7 +567,7 @@ end
 function update_columns!(dest, d::Number, x::AbstractVector, y::AbstractVector)
     I, J = size(dest)
     for j = 1:J
-        dyj = 2*d*y[j]
+        dyj = d*y[j]
         @simd for i = 1:I
             @inbounds dest[i,j] -= dyj*x[i]
         end
@@ -563,7 +578,7 @@ end
 # Computes dest -= C*diagm(d)*C', in the lower diagonal
 function update_columns!(dest, d::AbstractVector, C::AbstractMatrix)
     Ct = C'
-    Cdt = (2 .* d) .* Ct
+    Cdt = d .* Ct
     K = size(dest, 1)
     nc = size(C, 2)
     for j = 1:K
@@ -763,7 +778,8 @@ function forwardsubst!(Y, L::AbstractHemiCholesky)
         Lii = _getL(L, i, i)
         if iszeropiv(Lii)
             for jj = 1:si
-                Y[i,jj] = PureHemi{T}(0, -gα[jj]/Lii.m)
+                # μ*ν = -1/2, so solving μ*Y[i] = gα needs the factor of 2
+                Y[i,jj] = PureHemi{T}(0, -2*gα[jj]/Lii.m)
             end
             # Add a new zero-pivot column
             si += 1
@@ -789,7 +805,8 @@ function forwardsubst!(ytilde::AbstractVector, L::Union{AbstractHemiCholesky, Lo
         end
         Lii = _getL(L, i, i)
         if iszeropiv(Lii)
-            ytilde[i] = PureHemi{T}(0, -g/Lii.m)
+            # μ*ν = -1/2, so solving μ*ytilde[i] = g needs the factor of 2
+            ytilde[i] = PureHemi{T}(0, -2*g/Lii.m)
         else
             ytilde[i] = g/Lii
         end
@@ -902,7 +919,7 @@ function LinearAlgebra.logabsdet(F::HemiCholeskyReal{T}) where T
     any(==(Int8(0)), d) && return (T(-Inf), one(T))
     sign_det = T(prod(Int.(d)))
     Lreal = F.Lreal
-    logabs = n * log(2*one(T)) + 2 * sum(log(Lreal[j,j]) for j in 1:n)
+    logabs = 2 * sum(log(Lreal[j,j]) for j in 1:n)
     return (logabs, sign_det)
 end
 
